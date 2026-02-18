@@ -4,6 +4,7 @@ library(shinyjs)
 library(shinythemes)
 
 ui <- fluidPage(
+  useShinyjs(),
   theme = shinythemes::shinytheme("flatly"),
   tags$head(tags$style(
     HTML(
@@ -162,6 +163,8 @@ ui <- fluidPage(
           max = 50,
           value = c(18, 20)
         ),
+        div(
+          id = "filters",
         fluidRow(
           column(
             12,
@@ -190,7 +193,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_a", "", value = 3)),
+              column(5, numericInput("numeric_input_a", "", value = 3, min = 0)),
               checkboxInput("perfect_input", "Enable", value = TRUE)
             ),
             
@@ -218,7 +221,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_b", "", value = 50)),
+              column(5, numericInput("numeric_input_b", "", value = 50, min = 0)),
               checkboxInput("mismatch_input", "Enable", value = TRUE)
             ),
             
@@ -246,7 +249,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_c", "", value = 1E-6)),
+              column(5, numericInput("numeric_input_c", "", value = 1E-6, min = 0)),
               checkboxInput("Accessibility_input", "Enable", value =
                               TRUE)
             ),
@@ -275,7 +278,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_d", "", value = 0.05)),
+              column(5, numericInput("numeric_input_d", "", value = 0.05, min = 0, step = 0.01)),
               checkboxInput("Poly_input", "Enable", value = TRUE)
             ),
             
@@ -303,10 +306,13 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_e", "", value = 35)),
+              column(5, numericInput("numeric_input_e", "", value = 35, min = 0)),
               checkboxInput("tox_input", "Enable", value = TRUE)
             ),
-            actionButton("run_button", "Run")
+            fluidRow(
+              column(6, actionButton("run_button", "Run")),
+              column(6, actionButton("reset_defaults", "Set to default", style = "margin-left: -33px;"))
+            )),
           )
         )
       )
@@ -324,7 +330,7 @@ ui <- fluidPage(
         hr(),
         fluidRow(
           column(6,
-                 p("This table shows the number of ASOs that didn't meet filtering criterea."),
+                 p("This table shows the number of ASOs that did not meet filtering criterea."),
                  DTOutput("unfiltered_results_table")
                 ),
           column(2,
