@@ -39,6 +39,53 @@ function(input, output, session) {
 
   t1 <- Sys.time()
   
+  # Disable filters when selecting single ASO input
+  
+  observeEvent(input$single_aso_input, ignoreInit = TRUE, {
+    updateCheckboxInput(session, "perfect_input",  value = FALSE)
+    updateCheckboxInput(session, "mismatch_input", value = FALSE)
+    updateCheckboxInput(session, "Poly_input", value = FALSE)
+    updateCheckboxInput(session, "tox_input", value = FALSE)
+    updateCheckboxInput(session, "Accessibility_input", value = FALSE)
+  })
+  
+  # Enable filters when disabling single ASO input
+  
+  observeEvent(input$single_aso_input, ignoreInit = TRUE, {
+    if (!isTRUE(input$single_aso_input)) {
+      updateCheckboxInput(session, "perfect_input",  value = TRUE)
+      updateCheckboxInput(session, "mismatch_input", value = TRUE)
+      updateCheckboxInput(session, "Poly_input", value = TRUE)
+      updateCheckboxInput(session, "tox_input", value = TRUE)
+      updateCheckboxInput(session, "Accessibility_input", value = TRUE)
+    }
+  })
+  
+  # prevent input of negative values for filters
+  
+  ids <- c("numeric_input_e", "numeric_input_d", "numeric_input_c",
+           "numeric_input_a", "numeric_input_b")
+  
+  lapply(ids, function(this_id) {
+    observe({
+      val <- input[[this_id]]
+      if (!is.null(val) && !is.na(val) && val < 0) {
+        updateNumericInput(session, this_id, value = 0)
+      }
+    })
+  })
+  
+  
+  
+  # reset to standard values 
+  
+  observeEvent(input$reset_defaults, {
+    shinyjs::reset("filters")
+  })
+  
+  # add other filters
+
+ 
   observeEvent(input$run_button, {
     showNotification(
       "Script started",
@@ -46,6 +93,17 @@ function(input, output, session) {
       duration = NULL,
       closeButton = TRUE
     )
+    
+    
+  withProgress(message = "Running analysis...", value = 0, {
+     run_step <- function(label, amount, expr) {
+      incProgress(0, detail = paste0(label, "..."))
+       on.exit(
+        incProgress(amount, detail = paste0(label)),
+        add = TRUE
+      )
+       force(expr)
+    }
   
   # ----------------------------------- Functions ------------------------------
   # Make the tox score function
@@ -175,11 +233,13 @@ function(input, output, session) {
   # ----------------------------------- Data setup -----------------------------
   # Store all human pre-mRNA sequences
   
-  txdb_hsa <- tryCatch({
+  txdb_hsa <- run_step("Retrieving sequences from Ensembl", 0.05, {
+    tryCatch({
     loadDb("/opt/ASOstool-v2/txdb_hsa_biomart.db")
   }, error = function(e) {
     message("Primary txdb path not found, trying local path...")
     loadDb("../txdb_hsa_biomart.db")
+  })
   })
     
   # ----------------------------------- milestone 1 ----------------------------
@@ -338,8 +398,9 @@ function(input, output, session) {
   print("milestone 9.5: Calculated motif correlation score")
   
   # Bereken aantal "cg"
-  target_annotation$CGs = (target_annotation$length -
+  target_annotation$CGs = run_step("Getting mouse ortholog data", 0.10, {(target_annotation$length -
                    nchar(gsub('CG', '', target_annotation$name))) / 2
+  })
 
   # ----------------------------------- milestone 10 ---------------------------
   print("milestone 10: Calculated CG motifs")
@@ -477,8 +538,9 @@ function(input, output, session) {
                             width = MM_tab$w)
   
   # Adds if conserved in mouse.
-  target_annotation$conserved_in_mmusculus = target_annotation$name %in% RNAsitesMM
-  
+
+  target_annotation$conserved_in_mmusculus = run_step("Calculating secondary structure characteristics", 0.25, {target_annotation$name %in% RNAsitesMM
+  })
   
   # ----------------------------------- milestone 18.2 -------------------------
   print("milestone 18.2: If selected: Matched mouse ortholog to target gene")
@@ -644,8 +706,8 @@ function(input, output, session) {
     future.seed = TRUE
   )
   
-  uni_tar <- bind_rows(uni_tar_list)
-  
+  uni_tar <-run_step("Filtering data", 0.40, {bind_rows(uni_tar_list)
+  })
   # ----------------------------------- milestone 21 ---------------------------
   print("milestone 21: Matched ASO sequences to potential off-targets (perfect match, one mismatch")
   
@@ -1532,6 +1594,7 @@ function(input, output, session) {
           )
         }
       )
+  })
 
   t2 <- Sys.time()
   time <- t2 - t1
