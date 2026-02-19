@@ -159,9 +159,9 @@ function(input, output, session) {
       cat(seq.char, file = paste("|", cmmnd2, sep = ""))
       acc.tx = read.delim(
         "plfold_lunp",
-        as.is = T,
-        skip = 2,
-        header = F,
+        as.is     = TRUE,
+        skip      = 2,
+        header    = FALSE,
         row.names = 1
       )
       acc.tx = acc.tx[, colSums(is.na(acc.tx)) != nrow(acc.tx)]
@@ -405,17 +405,20 @@ function(input, output, session) {
   # ----------------------------------- milestone 10 ---------------------------
   print("milestone 10: Calculated CG motifs")
   
+  options(timeout = 60)
   
   # Define the marts for mmusculus and hsapiens
-  martHS = useEnsembl(biomart="ensembl",
-                      mirror  = "asia", # for when default mirror is not working
-                      dataset="hsapiens_gene_ensembl"
-                      )
-
-  martMM = useEnsembl(biomart="ensembl",
-                      mirror  = "asia", # for when default mirror is not working
-                      dataset="mmusculus_gene_ensembl"
-                      )
+  martHS <- useEnsembl(
+    biomart = "ENSEMBL_MART_ENSEMBL",
+    dataset = "hsapiens_gene_ensembl",
+    host    = "https://www.ensembl.org"
+  )
+  
+  martMM <- useEnsembl(
+    biomart = "ENSEMBL_MART_ENSEMBL",
+    dataset = "mmusculus_gene_ensembl",
+    host    = "https://www.ensembl.org"
+  )
   
   # Get the orthologous Ensembl gene for the provided human Ensembl ID
   ortho_ENS = getBM(attributes = "mmusculus_homolog_ensembl_gene",
