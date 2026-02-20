@@ -235,7 +235,7 @@ function(input, output, session) {
   
   txdb_hsa <- run_step("Retrieving sequences from Ensembl", 0.05, {
     tryCatch({
-    loadDb("/opt/ASOstool-v2/txdb_hsa_biomart.db")
+    loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
   }, error = function(e) {
     message("Primary txdb path not found, trying local path...")
     loadDb("../txdb_hsa_biomart.db")
