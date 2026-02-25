@@ -75,6 +75,20 @@ function(input, output, session) {
     })
   })
   
+  # make output table collapsable
+  show_all_cols <- reactiveVal(FALSE)
+  
+  observeEvent(input$toggle_cols, {
+    current <- show_all_cols()
+    show_all_cols(!current)
+    
+    # update button label
+    if (current) {
+      updateActionButton(inputId = "toggle_cols", label = "Show extended data")
+    } else {
+      updateActionButton(inputId = "toggle_cols", label = "Hide extended data ")
+    }
+  })
   
   
   # reset to standard values 
@@ -909,28 +923,81 @@ function(input, output, session) {
   
   
   # Render the tables.
-  output$results1 <- renderDataTable({
+  output$results1 <- DT::renderDT({
     req(target_annotation)
     
     df <- target_annotation
-    if ("off_target_score" %in% names(df)) {
-      ws_col <- which(names(df) == "off_target_score") - 1
-      
-      DT::datatable(
-        df,
-        rownames = FALSE,
-        selection = "single",
-        options = list(
-          order = list(list(ws_col, "asc"))
-        )
+    
+    column_order <- c(
+      "name",
+      "oligo_seq",
+      "length",
+      "tox_score",
+      "CGs",
+      "conserved_in_mmusculus",
+      "gene_hits_pm",
+      "gene_hits_1mm",
+      "off_target_score"
+    )
+    df <- df %>%
+      dplyr::select(dplyr::any_of(column_order), dplyr::everything())
+    
+    column_names <- c(
+      name                   = "Target (DNA)",
+      oligo_seq              = "ASO sequence",
+      length                 = "Length (nt)",
+      tox_score              = "Acute neurotox score",
+      CGs                    = "Number of CpGs",
+      conserved_in_mmusculus = "Conserved in mouse",
+      gene_hits_pm           = "Perfect matches",
+      gene_hits_1mm          = "1-mismatch hits",
+      off_target_score       = "Off-target score"
+    )
+    to_rename <- intersect(names(df), names(column_names))
+    df <- df %>%
+      dplyr::rename(
+        !!!setNames(to_rename, column_names[to_rename])
       )
-    } else {
-      DT::datatable(
-        df,
-        rownames = FALSE,
-        selection = "single"
+    
+    main_cols <- c(
+      "Target (DNA)",
+      "ASO sequence",
+      "Length (nt)",
+      "Acute neurotox score",
+      "Number of CpGs",
+      "Conserved in mouse",
+      "Perfect matches",
+      "1-mismatch hits",
+      "Off-target score"
+    )
+    main_cols <- intersect(main_cols, names(df))  
+    main_idx  <- match(main_cols, names(df))
+    extra_idx <- setdiff(seq_along(df), main_idx)
+    
+    order_option <- list()
+    if ("Off-target score" %in% names(df)) {
+      ws_col <- which(names(df) == "Off-target score") - 1  
+      order_option <- list(list(ws_col, "asc"))
+    }
+    
+    column_defs <- list()
+    if (!show_all_cols() && length(extra_idx) > 0) {
+      column_defs[[1]] <- list(
+        visible = FALSE,
+        targets = extra_idx - 1L   
       )
     }
+    
+    DT::datatable(
+      df,
+      rownames  = FALSE,
+      selection = "single",
+      options   = list(
+        dom        = "tip",         
+        columnDefs = column_defs,
+        order      = order_option
+      )
+    )
   })
   # ----------------------------- Offtarget analysis ---------------------------
   

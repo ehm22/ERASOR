@@ -92,14 +92,14 @@ ui <- fluidPage(
         checkboxInput(
           "ASO_ending_G",
           label = tagList(
-            "Filter ASO ending in G ",
+            "Filter out ASOs ending in G ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
                 height = "20px",
                 style = "margin-bottom: 3px;"
               ),
-              title = "Filters ASO sequences ending with G. These sequences could lead to unwanted toxic effects. ",
+              title = "Filters ASO sequences ending with G. These sequences have a higher chance to induce toxicity. ",
               `data-placement` = "right",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
@@ -110,14 +110,14 @@ ui <- fluidPage(
         checkboxInput(
           "Conserved_input",
           label = tagList(
-            "Conserved & Orthology ",
+            "Conserved in mouse ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
                 height = "20px",
                 style = "margin-bottom: 3px;"
               ),
-              title = "This feature compares an Ensembl gene to the mouse genome to identify conserved regions and orthologous genes. Because of the strong genetic similarity between mice and humans, this helps determine whether the gene can be studied in vivo in mice.",
+              title = "This feature identifies conserved regions and orthologous genes in the mouse genome. Enabling this filter will show ASOs which could be used in mouse models.",
               `data-placement` = "right",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
@@ -128,7 +128,7 @@ ui <- fluidPage(
         checkboxInput(
           "linux_input",
           label = tagList(
-            "Running on Linux-OS ",
+            "Accessibility calculation (Linux-OS only)",
             tags$span(
               tags$img(
                 src = "questionmark.png",
@@ -136,7 +136,7 @@ ui <- fluidPage(
                 style = "margin-bottom: 3px;"
               ),
               title = "Enable this setting only when running on a Linux operating system. Some features, such as the ViennaRNA analysis, require Linux. Enabling this option on other systems, such as Windows or Mac, may cause the program to fail.",
-              `data-placement` = "right",
+              `data-placement` = "top",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
             )
@@ -153,14 +153,14 @@ ui <- fluidPage(
                 height = "20px",
                 style = "margin-bottom: 3px;"
               ),
-              title = "This option allows the user to input a length/range for the target mRNA sequences and complementary ASO sequences. Larger lengths/ranges will generally have a shorter runtime, while shorter lengths/ranges will take longer to process. ",
+              title = "Longer oligo lengths and a wider range of different lengths leads to longer runtime, we recommend a range of 3 lengths",
               `data-placement` = "right",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
             )
           ),
-          min = 0,
-          max = 50,
+          min = 15,
+          max = 25,
           value = c(18, 20)
         ),
         div(
@@ -170,14 +170,14 @@ ui <- fluidPage(
             12,
             
             h5(tagList(
-              HTML("<b>Amount of perfect matches</b> "),
+              HTML("<b>Off-targets with perfect matches</b> "),
               tags$span(
                 tags$img(
                   src = "questionmark.png",
                   height = "20px",
                   style = "margin-bottom: 3px;"
                 ),
-                title = "This option sets the amount of perfect matches allowed. The value is used as a quality control threshold of the target mRNA sequences. ",
+                title = "Desired number of perfectly complementary off-targets. ",
                 `data-toggle` = "tooltip",
                 `data-placement` = "right",
                 style = "cursor: pointer;"
@@ -193,19 +193,19 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_a", "", value = 3, min = 0)),
+              column(5, numericInput("numeric_input_a", "", value = 1, min = 0)),
               checkboxInput("perfect_input", "Enable", value = TRUE)
             ),
             
             h5(tagList(
-              HTML("<b>Amount of 1 mismatch </b>"),
+              HTML("<b>Off-targets with 1 mismatch </b>"),
               tags$span(
                 tags$img(
                   src = "questionmark.png",
                   height = "20px",
                   style = "margin-bottom: 3px;"
                 ),
-                title = "This option sets the amount of mismatches allowed. The value is used as a quality control threshold of the target mRNA sequences.",
+                title = "Desired number of off-targets with 1 mismatch/indel. Greater ranges lead to longer runtimes.",
                 `data-toggle` = "tooltip",
                 `data-placement` = "right",
                 style = "cursor: pointer;"
@@ -221,7 +221,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_b", "", value = 50, min = 0)),
+              column(5, numericInput("numeric_input_b", "", value = 10, min = 0)),
               checkboxInput("mismatch_input", "Enable", value = TRUE)
             ),
             
@@ -306,7 +306,7 @@ ui <- fluidPage(
                   choices = c("==", "!=", "<", ">", "<=", ">=")
                 )
               ),
-              column(5, numericInput("numeric_input_e", "", value = 35, min = 0)),
+              column(5, numericInput("numeric_input_e", "", value = 60, min = 0)),
               checkboxInput("tox_input", "Enable", value = TRUE)
             ),
             fluidRow(
@@ -338,6 +338,13 @@ ui <- fluidPage(
                  downloadButton("Download_unfiltered", "Download Unfiltered Results")
                )),
         hr(),
+        fluidRow(
+          column(
+            3,
+            actionButton("toggle_cols", "Extended data")
+          )
+        ),
+        br(),
         DT::dataTableOutput('results1'),
         hr(),
         downloadButton("Download_filtered", "Download Filtered Results"),
