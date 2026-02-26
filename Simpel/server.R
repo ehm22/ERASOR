@@ -26,6 +26,24 @@ source("../tools/Off_target_accessibility.R")
 plan(multicore, workers = 12)
 options(future.globals.maxSize = 6 * 1024^3)
 
+# Helper function to trak time of the run---------------------------------------
+format_elapsed <- function(start_time, end_time = Sys.time()) {
+  elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
+  
+  hours   <- floor(elapsed / 3600)
+  minutes <- floor((elapsed %% 3600) / 60)
+  seconds <- floor(elapsed %% 60)
+  
+  parts <- c()
+  if (hours > 0)   parts <- c(parts, sprintf("%dh", hours))
+  if (minutes > 0) parts <- c(parts, sprintf("%dm", minutes))
+  parts <- c(parts, sprintf("%ds", seconds))  
+  
+  paste(parts, collapse = " ")
+}
+#-------------------------------------------------------------------------------
+
+
 function(input, output, session) {
 
   # ----------------------------------- Notifications UI -----------------------
@@ -36,8 +54,6 @@ function(input, output, session) {
     duration = NULL,
     closeButton = TRUE
   )
-
-  t1 <- Sys.time()
   
   # Disable filters when selecting single ASO input
   
@@ -97,10 +113,11 @@ function(input, output, session) {
     shinyjs::reset("filters")
   })
   
-  # add other filters
-
- 
+ # starts timer, shows that the scirpt started and is loadin gthe progress bar
+  
   observeEvent(input$run_button, {
+    start_time <- Sys.time()
+ 
     showNotification(
       "Script started",
       type = "default",
@@ -228,8 +245,8 @@ function(input, output, session) {
         filtered_df <- df %>% filter(.data[[columname]] > valueX)
         return(filtered_df)
       },
-      "<=" = {
-        # Code for when my_string is "<="
+      "Less than <=" = {
+        # Code for when my_string is "Less than <="
         filtered_df <- df %>% filter(.data[[columname]] <= valueX)
         return(filtered_df)
       },
@@ -762,20 +779,11 @@ function(input, output, session) {
   
   if (isTRUE(perform_offt)) {
     
-    showNotification(
-      sprintf("Future run started at: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-      type = "default", duration = NULL, closeButton = TRUE
-    )
-    
-    cat(
-      sprintf("Future run started at: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-      file = "future_log.txt", append = FALSE
-    )
-    
     ta <- target_annotation %>% 
-      select(name, length) %>% 
-      distinct()
+      dplyr::select(name, length) %>% 
+      dplyr::distinct()
     print(nrow(ta))
+    
     summary_server <- tryCatch(
       {
         res_list <- future_lapply(
@@ -790,39 +798,30 @@ function(input, output, session) {
             # Retrieve the GGGenome information with the default setting of a maximum of 2 mismatches.
             df <- all_offt(seq_i, mismatches_allowed = 2)
             
-            cat("Worker finished i=", i, " nrow=",
-                if (is.data.frame(df)) nrow(df) else NA, "\n",
-                file = "future_log.txt", append = TRUE)
+            cat(
+              "Worker finished i=", i, 
+              " nrow=", if (is.data.frame(df)) nrow(df) else NA, "\n",
+              file = "future_log.txt", append = TRUE
+            )
             
             if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(NULL)
             
-            df$name <- seq_i
+            df$name   <- seq_i
             df$length <- len_i
             df
           },
           future.seed = TRUE
         )
         
-        out <- bind_rows(Filter(Negate(is.null), res_list)) %>%
-          mutate(distance = mismatches + deletions + insertions) %>%
-          distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
+        out <- dplyr::bind_rows(Filter(Negate(is.null), res_list)) %>%
+          dplyr::mutate(distance = mismatches + deletions + insertions) %>%
+          dplyr::distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
         
         out
       },
       error = function(e) {
         message("GGGenome is currently unavailable. Off-target features are disabled. ", e$message)
         NULL
-      },
-      finally = {
-        showNotification(
-          sprintf("Future run ended at: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-          type = "default", duration = NULL, closeButton = TRUE
-        )
-        
-        cat(
-          sprintf("Future run ended at: %s\n\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-          file = "future_log.txt", append = TRUE
-        )
       }
     )
   }
@@ -1666,19 +1665,16 @@ function(input, output, session) {
       )
   })
 
-  t2 <- Sys.time()
-  time <- t2 - t1
-  print(time)
+  end_time <- Sys.time()
+  elapsed_str <- format_elapsed(start_time, end_time)
+  
   showNotification(
-    "Script finished",
+    paste("Full run completed in", elapsed_str),
     type = "default",
     duration = NULL,
-    # Notification stays until clicked away
     closeButton = TRUE
   )
-  print("done")
-  }
-  )
+  })
 }
 
 

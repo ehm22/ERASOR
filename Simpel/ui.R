@@ -190,7 +190,7 @@ ui <- fluidPage(
                   "dropdown_input_a",
                   "",
                   selected = "==",
-                  choices = c("==", "!=", "<", ">", "<=", ">=")
+                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
                 )
               ),
               column(5, numericInput("numeric_input_a", "", value = 1, min = 0)),
@@ -217,8 +217,8 @@ ui <- fluidPage(
                 selectInput(
                   "dropdown_input_b",
                   "",
-                  selected = "<=",
-                  choices = c("==", "!=", "<", ">", "<=", ">=")
+                  selected = "Less than <=",
+                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
                 )
               ),
               column(5, numericInput("numeric_input_b", "", value = 10, min = 0)),
@@ -246,7 +246,7 @@ ui <- fluidPage(
                   "dropdown_input_c",
                   "",
                   selected = ">",
-                  choices = c("==", "!=", "<", ">", "<=", ">=")
+                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
                 )
               ),
               column(5, numericInput("numeric_input_c", "", value = 1E-6, min = 0)),
@@ -275,7 +275,7 @@ ui <- fluidPage(
                   "dropdown_input_d",
                   "",
                   selected = "<",
-                  choices = c("==", "!=", "<", ">", "<=", ">=")
+                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
                 )
               ),
               column(5, numericInput("numeric_input_d", "", value = 0.05, min = 0, step = 0.01)),
@@ -303,7 +303,7 @@ ui <- fluidPage(
                   "dropdown_input_e",
                   "",
                   selected = ">=",
-                  choices = c("==", "!=", "<", ">", "<=", ">=")
+                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
                 )
               ),
               column(5, numericInput("numeric_input_e", "", value = 60, min = 0)),
