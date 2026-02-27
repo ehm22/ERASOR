@@ -43,6 +43,54 @@ format_elapsed <- function(start_time, end_time = Sys.time()) {
 }
 #-------------------------------------------------------------------------------
 
+#################### test for sliding filter with numeric boxes ################
+# --- Reusable range filter module (slider + numeric boxes) ----
+rangeFilterServer <- function(id, min_allowed, max_allowed) {
+  moduleServer(id, function(input, output, session) {
+    
+    # When user types in numeric boxes → update slider
+    observeEvent(
+      c(input$min, input$max),
+      ignoreInit = TRUE,
+      {
+        # If user is in the middle of typing (empty / NA), don't touch anything
+        if (is.null(input$min) || is.null(input$max) ||
+            is.na(input$min)   || is.na(input$max)) {
+          return()
+        }
+        
+        # Enforce order + bounds
+        min_val <- max(min_allowed, min(input$min, input$max))
+        max_val <- min(max_allowed, max(input$min, input$max))
+        
+        if (!identical(input$slider, c(min_val, max_val))) {
+          updateSliderInput(
+            session,
+            "slider",
+            value = c(min_val, max_val)
+          )
+        }
+      }
+    )
+    
+    # When user drags the slider → update numeric boxes
+    observeEvent(
+      input$slider,
+      ignoreInit = TRUE,
+      {
+        rng <- input$slider
+        updateNumericInput(session, "min", value = rng[1])
+        updateNumericInput(session, "max", value = rng[2])
+      }
+    )
+    
+    # Expose current [min, max] as a reactive
+    reactive({
+      input$slider
+    })
+  })
+}
+################################################################################
 
 function(input, output, session) {
 
@@ -79,8 +127,8 @@ function(input, output, session) {
   
   # prevent input of negative values for filters
   
-  ids <- c("numeric_input_e", "numeric_input_d", "numeric_input_c",
-           "numeric_input_a", "numeric_input_b")
+  ids <- c( "numeric_input_d", "numeric_input_c",
+           "numeric_input_a", "numeric_input_b") # "numeric_input_e", out if slidng
   
   lapply(ids, function(this_id) {
     observe({
@@ -113,6 +161,14 @@ function(input, output, session) {
     shinyjs::reset("filters")
   })
   
+  
+  # sliding filter with numeric boxes
+  tox_range <- rangeFilterServer(
+    id          = "tox_score",
+    min_allowed = 0,
+    max_allowed = 100
+  )
+
  # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
   observeEvent(input$run_button, {
@@ -595,7 +651,20 @@ function(input, output, session) {
                           filter(!grepl("^C", name))
                         )
   
-  nseq_toxscore <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_e, "tox_score", input$dropdown_input_e))
+  # nseq_toxscore <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_e, "tox_score", input$dropdown_input_e))
+  ## new with slidng
+  tox_rng <- tox_range()  # c(min, max) from UI
+  
+  nseq_toxscore <- nseq_prefilter - nrow(
+    target_annotation %>%
+      dplyr::filter(
+        !is.na(tox_score),
+        tox_score >= tox_rng[1],
+        tox_score <= tox_rng[2]
+      )
+  )
+  ##
+  
   nseq_pmfreq <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_d, "PM_max_freq", input$dropdown_input_d))
   
   nseq_accessible <- if (input$linux_input == TRUE) {
@@ -647,9 +716,31 @@ function(input, output, session) {
   }
   
   # 2) tox_score filter
+  ### commented out for sliding, to get back uncomment
+  # if (isTRUE(input$tox_input)) {
+  #   ta_prev <- ta
+  #   ta <- filter_function(ta, input$numeric_input_e, "tox_score", input$dropdown_input_e)
+  #   
+  #   if (nrow(ta) == 0) {
+  #     ta <- ta_prev
+  #     message("Filter 'tox_score' removed all rows; reverting to previous dataset.")
+  #     showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
+  #   }
+  # }
+  ###
+  
+  ### replacemetn 
+  # 2) tox_score filter (using range slider)
   if (isTRUE(input$tox_input)) {
     ta_prev <- ta
-    ta <- filter_function(ta, input$numeric_input_e, "tox_score", input$dropdown_input_e)
+    rng <- tox_range()  # c(min, max)
+    
+    ta <- ta %>%
+      dplyr::filter(
+        !is.na(tox_score),
+        tox_score >= rng[1],
+        tox_score <= rng[2]
+      )
     
     if (nrow(ta) == 0) {
       ta <- ta_prev
@@ -657,6 +748,7 @@ function(input, output, session) {
       showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
     }
   }
+  ###
   
   # 3) accessibility filter (alleen als linux + checkbox aanstaan)
   if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
@@ -928,29 +1020,66 @@ function(input, output, session) {
     df <- target_annotation
     
     column_order <- c(
-      "name",
+      
       "oligo_seq",
+      "name",
       "length",
+      "start",
+      "end",
+      # "gc_content", # once implemented
       "tox_score",
-      "CGs",
+      "off_target_score",
+      "n_distance_1",
+      "n_distance_2",
+      # "pli_score", # once implemented
+      "sec_energy", 
+      "duplex_energy",
+      "motif_cor_score",
+      "min_oe_lof",
       "conserved_in_mmusculus",
-      "gene_hits_pm",
+      "CGs",
+      "chr_start",
+      "chr_end", 
+      "PM_tot_freq",
+      "PM_max_freq",
+      "PM_count",
+      "n_distance_0",
+      "gene_hits_pm", 
       "gene_hits_1mm",
-      "off_target_score"
+      "NoRepeats",
+      "accessibility"
     )
     df <- df %>%
       dplyr::select(dplyr::any_of(column_order), dplyr::everything())
     
     column_names <- c(
-      name                   = "Target (DNA)",
       oligo_seq              = "ASO sequence",
+      name                   = "Target (DNA)",
       length                 = "Length (nt)",
+      start                  = "Start",
+      end                    = "End",
+      # gc_content             = "GC content (%)"
       tox_score              = "Acute neurotox score",
-      CGs                    = "Number of CpGs",
+      off_target_score       = "Off-target score",
+      n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
+      n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
+      # pli_score              = "pLI score"
+      sec_energy             = "ASO self-folding energy",
+      duplex_energy          = "ASO duplex energy",
+      min_oe_lof             = "Min. off-target LoF",
+      motif_cor_score        = "Motif correlation score",
       conserved_in_mmusculus = "Conserved in mouse",
-      gene_hits_pm           = "Perfect matches",
-      gene_hits_1mm          = "1-mismatch hits",
-      off_target_score       = "Off-target score"
+      CGs                    = "Number of CpGs",
+      chr_start              = "Chromosome start pos.",
+      chr_end                = "Chromosome end pos.",
+      PM_tot_freq            = "PM total freq.",
+      PM_max_freq            = "PM max freq.",
+      PM_count               = "PM count",
+      n_distance_0           = "Perfect matches (GGGenome)",
+      gene_hits_pm           = "Perfect matches (Peterson)",
+      gene_hits_1mm          = "Off-targets 1 mismatch (Peterson)",
+      NoRepeats              = "Number of repeats",
+      accessibility          = "Accessibility"
     )
     to_rename <- intersect(names(df), names(column_names))
     df <- df %>%
@@ -959,15 +1088,17 @@ function(input, output, session) {
       )
     
     main_cols <- c(
-      "Target (DNA)",
       "ASO sequence",
+      "Target (DNA)",
       "Length (nt)",
+      "Start",
+      "End",
+      # "GC content (%)"
       "Acute neurotox score",
-      "Number of CpGs",
-      "Conserved in mouse",
-      "Perfect matches",
-      "1-mismatch hits",
-      "Off-target score"
+      "Off-target score",
+      "Off-targets 1 mismatch (GGGenome)",
+      "Off-targets 2 mismatches (GGGenome)" # , 
+      # "pLI score"
     )
     main_cols <- intersect(main_cols, names(df))  
     main_idx  <- match(main_cols, names(df))
@@ -1669,7 +1800,7 @@ function(input, output, session) {
   elapsed_str <- format_elapsed(start_time, end_time)
   
   showNotification(
-    paste("Full run completed in", elapsed_str),
+    paste("Run completed in", elapsed_str),
     type = "default",
     duration = NULL,
     closeButton = TRUE

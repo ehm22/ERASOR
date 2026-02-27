@@ -3,6 +3,53 @@ library(shiny)
 library(shinyjs)
 library(shinythemes)
 
+### for sliders with numeric input boxes
+
+rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1) {
+  ns <- NS(id)
+  
+  tagList(
+    # Optional label (you can pass NULL to suppress)
+    if (!is.null(label)) h4(label),
+    
+    fluidRow(
+      column(
+        width = 6,
+        numericInput(
+          inputId = ns("min"),
+          label   = "From:",
+          value   = value[1],
+          min     = min,
+          max     = max,
+          step    = step
+        )
+      ),
+      column(
+        width = 6,
+        numericInput(
+          inputId = ns("max"),
+          label   = "To:",
+          value   = value[2],
+          min     = min,
+          max     = max,
+          step    = step
+        )
+      )
+    ),
+    sliderInput(
+      inputId = ns("slider"),
+      label   = NULL,
+      min     = min,
+      max     = max,
+      value   = value,
+      step    = step
+    )
+  )
+}
+
+###
+
+
 ui <- fluidPage(
   useShinyjs(),
   theme = shinythemes::shinytheme("flatly"),
@@ -55,7 +102,7 @@ ui <- fluidPage(
               style = "cursor: pointer;"
             )
           ),
-          value = "ENSG00000100284"
+          value = "ENSG00000174775"
         ),
         checkboxInput(
           "single_aso_input",
@@ -146,7 +193,7 @@ ui <- fluidPage(
         sliderInput(
           "oligo_length_range",
           label = tagList(
-            "Oligo length: ",
+            "ASO length: ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
@@ -281,7 +328,36 @@ ui <- fluidPage(
               column(5, numericInput("numeric_input_d", "", value = 0.05, min = 0, step = 0.01)),
               checkboxInput("Poly_input", "Enable", value = TRUE)
             ),
+            #### commented out, delete or comment back in if you kno wwhat to do
+            # h5(tagList(
+            #   HTML("<b>Toxicity score </b>"),
+            #   tags$span(
+            #     tags$img(
+            #       src = "questionmark.png",
+            #       height = "20px",
+            #       style = "margin-bottom: 3px;"
+            #     ),
+            #     title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
+            #     `data-toggle` = "tooltip",
+            #     `data-placement` = "right",
+            #     style = "cursor: pointer;"
+            #   )
+            # )),
+            # fluidRow(
+            #   column(
+            #     4,
+            #     selectInput(
+            #       "dropdown_input_e",
+            #       "",
+            #       selected = ">=",
+            #       choices = c("==", "!=", "<", ">", "Less than <=", ">=")
+            #     )
+            #   ),
+            #   column(5, numericInput("numeric_input_e", "", value = 60, min = 0)),
+            #   checkboxInput("tox_input", "Enable", value = TRUE)
+            # ),
             
+            #### replaces the commented out code from above
             h5(tagList(
               HTML("<b>Toxicity score </b>"),
               tags$span(
@@ -292,23 +368,28 @@ ui <- fluidPage(
                 ),
                 title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
                 `data-toggle` = "tooltip",
-                `data-placement` = "right",
                 style = "cursor: pointer;"
               )
             )),
             fluidRow(
               column(
-                4,
-                selectInput(
-                  "dropdown_input_e",
-                  "",
-                  selected = ">=",
-                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
+                9,
+                # New linked slider + numeric inputs for toxicity score
+                rangeFilterUI(
+                  id    = "tox_score",    # <-- module ID
+                  label = NULL,           # we already have the h5 label above
+                  min   = 0,              # adjust if your tox_score has a known range
+                  max   = 100,
+                  value = c(60, 100),     # default: >= 60
+                  step  = 1
                 )
               ),
-              column(5, numericInput("numeric_input_e", "", value = 60, min = 0)),
-              checkboxInput("tox_input", "Enable", value = TRUE)
+              column(
+                3,
+                checkboxInput("tox_input", "Enable", value = TRUE)
+              )
             ),
+            ####
             fluidRow(
               column(6, actionButton("run_button", "Run")),
               column(6, actionButton("reset_defaults", "Set to default", style = "margin-left: -33px;"))
