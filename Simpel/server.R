@@ -26,7 +26,7 @@ source("../tools/Off_target_accessibility.R")
 plan(multicore, workers = 12)
 options(future.globals.maxSize = 6 * 1024^3)
 
-# Helper function to trak time of the run---------------------------------------
+# Helper function to track time of the run---------------------------------------
 format_elapsed <- function(start_time, end_time = Sys.time()) {
   elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
   
@@ -165,6 +165,11 @@ function(input, output, session) {
   # sliding filter with numeric boxes
   tox_range <- rangeFilterServer(
     id          = "tox_score",
+    min_allowed = 0,
+    max_allowed = 100
+  )
+  gc_range <- rangeFilterServer(
+    id          = "gc_content",
     min_allowed = 0,
     max_allowed = 100
   )
@@ -439,6 +444,11 @@ function(input, output, session) {
   # Toxicity score acute neurotox score (desired >70)
   target_annotation$tox_score = calculate_acute_neurotox(target_annotation$oligo_seq)
   
+  # ----------------------------------- milestone 8.5 --------------------------
+  oligo_dna <- DNAStringSet(target_annotation$oligo_seq)
+  gc_counts <- letterFrequency(oligo_dna, c("G", "C"))
+  oligo_len <- width(oligo_dna)
+  target_annotation$gc_content <- rowSums(gc_counts) / oligo_len * 100
   
   # ----------------------------------- milestone 9 ----------------------------
   print("milestone 9: Calculated toxicity score and filtering")
@@ -653,14 +663,23 @@ function(input, output, session) {
   
   # nseq_toxscore <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_e, "tox_score", input$dropdown_input_e))
   ## new with slidng
-  tox_rng <- tox_range()  # c(min, max) from UI
-  
+  tox_rng <- tox_range()  
   nseq_toxscore <- nseq_prefilter - nrow(
     target_annotation %>%
       dplyr::filter(
         !is.na(tox_score),
         tox_score >= tox_rng[1],
         tox_score <= tox_rng[2]
+      )
+  )
+  
+  gc_rng <- gc_range()
+  nseq_gc <- nseq_prefilter - nrow(
+    target_annotation %>%
+      dplyr::filter(
+        !is.na(gc_content),
+        gc_content >= gc_rng[1],
+        gc_content <= gc_rng[2]
       )
   )
   ##
@@ -678,6 +697,7 @@ function(input, output, session) {
       "Prefiltered",
       "ASO ending with G",
       "Tox score",
+      "GC content",
       "PM frequency",
       "Accessibility"
       ),
@@ -685,6 +705,7 @@ function(input, output, session) {
       nseq_prefilter,
       nseq_ending_G,
       nseq_toxscore,
+      nseq_gc,
       nseq_pmfreq,
       nseq_accessible
     )
@@ -746,6 +767,24 @@ function(input, output, session) {
       ta <- ta_prev
       message("Filter 'tox_score' removed all rows; reverting to previous dataset.")
       showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
+    }
+  }
+  # 2b) GC content filter (using range slider) ----
+  if (isTRUE(input$gc_input)) {   
+    ta_prev <- ta
+    rng <- gc_range()  # c(min, max)
+    
+    ta <- ta %>%
+      dplyr::filter(
+        !is.na(gc_content),
+        gc_content >= rng[1],
+        gc_content <= rng[2]
+      )
+    
+    if (nrow(ta) == 0) {
+      ta <- ta_prev
+      message("Filter 'gc_content' removed all rows; reverting to previous dataset.")
+      showNotification("Filter 'GC content' removed all rows; reverting to previous dataset.", type = "warning")
     }
   }
   ###
@@ -1026,7 +1065,7 @@ function(input, output, session) {
       "length",
       "start",
       "end",
-      # "gc_content", # once implemented
+      "gc_content", 
       "tox_score",
       "off_target_score",
       "n_distance_1",
@@ -1058,12 +1097,12 @@ function(input, output, session) {
       length                 = "Length (nt)",
       start                  = "Start",
       end                    = "End",
-      # gc_content             = "GC content (%)"
+      gc_content             = "GC content (%)",
       tox_score              = "Acute neurotox score",
       off_target_score       = "Off-target score",
       n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
       n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
-      # pli_score              = "pLI score"
+      # pli_score              = "pLI score".
       sec_energy             = "ASO self-folding energy",
       duplex_energy          = "ASO duplex energy",
       min_oe_lof             = "Min. off-target LoF",
@@ -1093,7 +1132,7 @@ function(input, output, session) {
       "Length (nt)",
       "Start",
       "End",
-      # "GC content (%)"
+      "GC content (%)",
       "Acute neurotox score",
       "Off-target score",
       "Off-targets 1 mismatch (GGGenome)",

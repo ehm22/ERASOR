@@ -389,6 +389,38 @@ ui <- fluidPage(
                 checkboxInput("tox_input", "Enable", value = TRUE)
               )
             ),
+            #### GC content filter ####
+            h5(tagList(
+              HTML("<b>GC content (%) </b>"),
+              tags$span(
+                tags$img(
+                  src   = "questionmark.png",
+                  height = "20px",
+                  style  = "margin-bottom: 3px;"
+                ),
+                title = "GC percentage of the ASO sequence. Extreme GC content may affect binding and specificity.",
+                `data-toggle` = "tooltip",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "gc_content",   # <-- module ID, matches server
+                  label = NULL,
+                  min   = 0,
+                  max   = 100,
+                  value = c(40, 60),      # default GC% window, adjust as you like
+                  step  = 1
+                )
+              ),
+              column(
+                3,
+                checkboxInput("gc_input", "Enable", value = FALSE)
+              )
+            ),
+          
             ####
             fluidRow(
               column(6, actionButton("run_button", "Run")),
