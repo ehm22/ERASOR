@@ -3,6 +3,7 @@ library(shinythemes)
 library(shiny)
 library(shinydashboard)
 library(GenomicFeatures)
+library(GenomeInfoDb)   
 library(AnnotationDbi)
 library(BSgenome.Hsapiens.NCBI.GRCh38)
 library(biomaRt)
@@ -103,6 +104,67 @@ function(input, output, session) {
     closeButton = TRUE
   )
   
+  ################################# ensembl autocomplete#############
+  # ---- Ensembl autocomplete: build dropdown choices once at startup ----
+  
+  # Load TxDb just for gene list (lighter than full analysis pipeline)
+  txdb_for_choices <- tryCatch({
+    loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+  }, error = function(e) {
+    message("Primary txdb path not found for choices, trying local path...")
+    loadDb("../txdb_hsa_biomart.db")
+  })
+  
+  gdb_for_choices <- genes(txdb_for_choices)
+  
+  # Keep same chromosomes as analysis pipeline
+  chr_to_keep <- c(as.character(1:22), "X", "Y", "MT")
+  gdb_for_choices <- gdb_for_choices[seqnames(gdb_for_choices) %in% chr_to_keep]
+  
+  ens_ids <- names(gdb_for_choices)
+  
+  # Try to map to gene symbols if org.Hs.eg.db is installed
+  if (requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+    gene_symbols <- AnnotationDbi::mapIds(
+      org.Hs.eg.db,
+      keys      = ens_ids,
+      column    = "SYMBOL",
+      keytype   = "ENSEMBL",
+      multiVals = "first"
+    )
+  } else {
+    gene_symbols <- rep(NA_character_, length(ens_ids))
+  }
+  
+  gene_map <- data.frame(
+    ensembl = ens_ids,
+    symbol  = gene_symbols,
+    stringsAsFactors = FALSE
+  )
+  
+  gene_map$label <- ifelse(
+    is.na(gene_map$symbol) | gene_map$symbol == "",
+    gene_map$ensembl,  # fallback: just show Ensembl ID
+    paste0(gene_map$symbol, " (", gene_map$ensembl, ")")
+  )
+  
+  # What Shiny will see:
+  #   names(gene_choices)  = labels in dropdown
+  #   values(gene_choices) = Ensembl IDs (what your script uses)
+  gene_choices <- setNames(gene_map$ensembl, gene_map$label)
+  
+
+  observe({
+    updateSelectizeInput(
+      session,
+      inputId  = "ensemble_id_input",
+      choices  = gene_choices,
+      selected = "ENSG00000174775", # sets HRAS as default
+      server   = TRUE
+    )
+  })
+  ######################################################################
+  
   # Disable filters when selecting single ASO input
   
   observeEvent(input$single_aso_input, ignoreInit = TRUE, {
@@ -160,7 +222,6 @@ function(input, output, session) {
   observeEvent(input$reset_defaults, {
     shinyjs::reset("filters")
   })
-  
   
   # sliding filter with numeric boxes
   tox_range <- rangeFilterServer(
@@ -340,22 +401,20 @@ function(input, output, session) {
   # Extract the genes
   gdb_hsa <- genes(txdb_hsa)
   
-  # Define the chromosomes to keep
-  chr_to_keep <- c(as.character(1:22), 'X', 'Y', 'MT')
+  # Harmonize seqname style between TxDb and BSgenome
+  # (this fixes the 'invalid sequence name: 1' error)
+  seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
   
-  # Filtert Hsapiens zodat het alleen de aangegeven chromosomen pakt
-  Hsapiens@user_seqnames <- setNames(chr_to_keep, chr_to_keep)
-  Hsapiens@seqinfo <- Hsapiens@seqinfo[chr_to_keep]
-  
-  # Subset genes to keep only those on specified chromosomes
-  gdb_hsa <- gdb_hsa[seqnames(gdb_hsa) %in% chr_to_keep]
+  # Keep only chromosomes present in BOTH objects
+  common_chrs <- intersect(seqlevels(gdb_hsa), seqlevels(Hsapiens))
+  gdb_hsa <- keepSeqlevels(gdb_hsa, common_chrs, pruning.mode = "coarse")
   
   # ----------------------------------- milestone 2 ----------------------------
   print("milestone2: Subsetted genes from specified chromosomes")
   
   # Get the sequences *
   HS <- getSeq(Hsapiens, gdb_hsa)
-    
+  
   # ----------------------------------- milestone 3 ----------------------------
   print("milestone3: Saved human gene sequences")
   # Target collect the pre-mRNA sequence
@@ -1124,6 +1183,11 @@ function(input, output, session) {
     df <- df %>%
       dplyr::rename(
         !!!setNames(to_rename, column_names[to_rename])
+      )
+    
+    df <- df %>%
+      dplyr::mutate(
+        `GC content (%)`         = round(`GC content (%)`, 0)
       )
     
     main_cols <- c(

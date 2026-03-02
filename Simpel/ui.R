@@ -86,7 +86,7 @@ ui <- fluidPage(
     sidebarPanel(fluidRow(
       column(
         12,
-        textInput(
+        selectizeInput(
           "ensemble_id_input",
           label = tagList(
             "Enter Ensembl id:  ",
@@ -102,7 +102,13 @@ ui <- fluidPage(
               style = "cursor: pointer;"
             )
           ),
-          value = "ENSG00000174775"
+          choices  = NULL,     
+          multiple = FALSE,
+          options  = list(
+            placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
+            maxOptions  = 50,
+            create      = TRUE
+          )
         ),
         checkboxInput(
           "single_aso_input",
