@@ -67,6 +67,7 @@ RUN R -e "install.packages('BiocManager', repos='https://cloud.r-project.org')" 
         'biomaRt', \
         'Biostrings', \
         'txdbmaker' \
+        'org.Hs.eg.db' \
      ), ask = FALSE)" \
  && R -e "install.packages(c( \
         'shinythemes', 'shiny', 'shinyjs', 'tidyverse', 'cluster', \
