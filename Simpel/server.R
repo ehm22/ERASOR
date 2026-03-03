@@ -123,19 +123,44 @@ function(input, output, session) {
   
   ens_ids <- names(gdb_for_choices)
   
-  # Try to map to gene symbols if org.Hs.eg.db is installed
-  if (requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
-    gene_symbols <- AnnotationDbi::mapIds(
-      org.Hs.eg.db,
-      keys      = ens_ids,
-      column    = "SYMBOL",
-      keytype   = "ENSEMBL",
-      multiVals = "first"
+  # ---- Option 2: get gene symbols via biomaRt (no org.Hs.eg.db needed) ----
+  message("Building Ensembl → gene symbol mapping via biomaRt ...")
+  
+  gene_symbols <- rep(NA_character_, length(ens_ids))
+  
+  # Try to contact Ensembl. If it fails, we silently fall back to Ensembl-only.
+  bm_ok <- FALSE
+  try({
+    mart <- biomaRt::useEnsembl(
+      biomart = "ENSEMBL_MART_ENSEMBL",
+      dataset = "hsapiens_gene_ensembl",
+      host    = "https://www.ensembl.org"
     )
-  } else {
+    
+    # Get mapping for all Ensembl gene IDs present in our TxDb
+    bm_map <- biomaRt::getBM(
+      attributes = c("ensembl_gene_id", "hgnc_symbol"),
+      filters    = "ensembl_gene_id",
+      values     = ens_ids,
+      mart       = mart
+    )
+    
+    # Make sure we only keep unique mapping per Ensembl ID
+    bm_map <- bm_map[!duplicated(bm_map$ensembl_gene_id), ]
+    
+    # Match back to our ens_ids order
+    idx <- match(ens_ids, bm_map$ensembl_gene_id)
+    gene_symbols <- bm_map$hgnc_symbol[idx]
+    
+    bm_ok <- TRUE
+  }, silent = TRUE)
+  
+  if (!bm_ok) {
+    message("WARNING: biomaRt mapping failed; falling back to Ensembl IDs only.")
     gene_symbols <- rep(NA_character_, length(ens_ids))
   }
   
+  # Build label/choice table
   gene_map <- data.frame(
     ensembl = ens_ids,
     symbol  = gene_symbols,
@@ -148,9 +173,9 @@ function(input, output, session) {
     paste0(gene_map$symbol, " (", gene_map$ensembl, ")")
   )
   
-  # What Shiny will see:
-  #   names(gene_choices)  = labels in dropdown
-  #   values(gene_choices) = Ensembl IDs (what your script uses)
+  # What Shiny will see in the dropdown:
+  # - names(gene_choices)  = labels (e.g. "HRAS (ENSG... )")
+  # - values(gene_choices) = Ensembl IDs used by the pipeline
   gene_choices <- setNames(gene_map$ensembl, gene_map$label)
   
 
