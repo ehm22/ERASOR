@@ -46,49 +46,87 @@ format_elapsed <- function(start_time, end_time = Sys.time()) {
 
 #################### test for sliding filter with numeric boxes ################
 # --- Reusable range filter module (slider + numeric boxes) ----
-rangeFilterServer <- function(id, min_allowed, max_allowed) {
+rangeFilterServer <- function(id, min_allowed, max_allowed,
+                              fixed = c("none", "left", "right")) {
+  fixed <- match.arg(fixed)
+  
   moduleServer(id, function(input, output, session) {
     
-    # When user types in numeric boxes → update slider
-    observeEvent(
-      c(input$min, input$max),
-      ignoreInit = TRUE,
-      {
-        # If user is in the middle of typing (empty / NA), don't touch anything
-        if (is.null(input$min) || is.null(input$max) ||
-            is.na(input$min)   || is.na(input$max)) {
-          return()
-        }
+    if (fixed == "none") {
+      
+      # numeric -> slider
+      observeEvent(c(input$min, input$max), ignoreInit = TRUE, {
+        if (is.null(input$min) || is.null(input$max) || anyNA(c(input$min, input$max))) return()
         
-        # Enforce order + bounds
         min_val <- max(min_allowed, min(input$min, input$max))
         max_val <- min(max_allowed, max(input$min, input$max))
         
         if (!identical(input$slider, c(min_val, max_val))) {
-          updateSliderInput(
-            session,
-            "slider",
-            value = c(min_val, max_val)
-          )
+          updateSliderInput(session, "slider", value = c(min_val, max_val))
         }
-      }
-    )
-    
-    # When user drags the slider → update numeric boxes
-    observeEvent(
-      input$slider,
-      ignoreInit = TRUE,
-      {
+      })
+      
+      # slider -> numeric
+      observeEvent(input$slider, ignoreInit = TRUE, {
         rng <- input$slider
+        if (is.null(rng) || length(rng) != 2 || anyNA(rng)) return()
+        
         updateNumericInput(session, "min", value = rng[1])
         updateNumericInput(session, "max", value = rng[2])
+      })
+      
+      reactive(input$slider)
+      
+    } else if (fixed == "left") {
+      
+      get_max <- function(x) {
+        if (is.null(x) || anyNA(x)) return(NULL)
+        if (length(x) == 2) x[2] else x[1]
       }
-    )
-    
-    # Expose current [min, max] as a reactive
-    reactive({
-      input$slider
-    })
+      
+      observeEvent(input$slider, ignoreInit = TRUE, {
+        v0 <- get_max(input$slider); if (is.null(v0)) return()
+        v  <- min(max_allowed, max(min_allowed, v0))
+        
+        if (!identical(input$max, v))    updateNumericInput(session, "max", value = v)
+        if (!identical(get_max(input$slider), v)) updateSliderInput(session, "slider", value = v)
+      })
+      
+      observeEvent(input$max, ignoreInit = TRUE, {
+        if (is.null(input$max) || anyNA(input$max)) return()
+        v <- min(max_allowed, max(min_allowed, input$max))
+        
+        if (!identical(get_max(input$slider), v)) updateSliderInput(session, "slider", value = v)
+        if (!identical(input$max, v))             updateNumericInput(session, "max", value = v)
+      })
+      
+      reactive(c(min_allowed, get_max(input$slider)))
+      
+    } else { # fixed == "right"
+      
+      get_min <- function(x) {
+        if (is.null(x) || anyNA(x)) return(NULL)
+        x[1]
+      }
+      
+      observeEvent(input$slider, ignoreInit = TRUE, {
+        v0 <- get_min(input$slider); if (is.null(v0)) return()
+        v  <- min(max_allowed, max(min_allowed, v0))
+        
+        if (!identical(input$min, v))    updateNumericInput(session, "min", value = v)
+        if (!identical(get_min(input$slider), v)) updateSliderInput(session, "slider", value = v)
+      })
+      
+      observeEvent(input$min, ignoreInit = TRUE, {
+        if (is.null(input$min) || anyNA(input$min)) return()
+        v <- min(max_allowed, max(min_allowed, input$min))
+        
+        if (!identical(get_min(input$slider), v)) updateSliderInput(session, "slider", value = v)
+        if (!identical(input$min, v))             updateNumericInput(session, "min", value = v)
+      })
+      
+      reactive(c(get_min(input$slider), max_allowed))
+    }
   })
 }
 ################################################################################
@@ -198,6 +236,7 @@ function(input, output, session) {
     updateCheckboxInput(session, "Poly_input", value = FALSE)
     updateCheckboxInput(session, "tox_input", value = FALSE)
     updateCheckboxInput(session, "Accessibility_input", value = FALSE)
+    updateCheckboxInput(session, "gc_input", value = FALSE)
   })
   
   # Enable filters when disabling single ASO input
@@ -209,22 +248,24 @@ function(input, output, session) {
       updateCheckboxInput(session, "Poly_input", value = TRUE)
       updateCheckboxInput(session, "tox_input", value = TRUE)
       updateCheckboxInput(session, "Accessibility_input", value = TRUE)
+      updateCheckboxInput(session, "gc_input", value = TRUE)
     }
   })
   
   # prevent input of negative values for filters
-  
-  ids <- c( "numeric_input_d", "numeric_input_c",
-           "numeric_input_a", "numeric_input_b") # "numeric_input_e", out if slidng
-  
-  lapply(ids, function(this_id) {
-    observe({
-      val <- input[[this_id]]
-      if (!is.null(val) && !is.na(val) && val < 0) {
-        updateNumericInput(session, this_id, value = 0)
-      }
-    })
-  })
+  ##############&*################
+  # ids <- c( "numeric_input_d", "numeric_input_c",
+  #          "numeric_input_a", "numeric_input_b") # "numeric_input_e", out if slidng
+  # 
+  # lapply(ids, function(this_id) {
+  #   observe({
+  #     val <- input[[this_id]]
+  #     if (!is.null(val) && !is.na(val) && val < 0) {
+  #       updateNumericInput(session, this_id, value = 0)
+  #     }
+  #   })
+  # })
+  ###############&*############################
   
   # make output table collapsable
   show_all_cols <- reactiveVal(FALSE)
@@ -249,16 +290,12 @@ function(input, output, session) {
   })
   
   # sliding filter with numeric boxes
-  tox_range <- rangeFilterServer(
-    id          = "tox_score",
-    min_allowed = 0,
-    max_allowed = 100
-  )
-  gc_range <- rangeFilterServer(
-    id          = "gc_content",
-    min_allowed = 0,
-    max_allowed = 100
-  )
+  tox_range <- rangeFilterServer("tox_score",    0, 136, fixed = "right")
+  gc_range  <- rangeFilterServer("gc_content",   0, 100, fixed = "none")
+  pm_range  <- rangeFilterServer("pm_freq",      0, 1,   fixed = "left")
+  acc_range <- rangeFilterServer("accessibility",0, 1,   fixed = "none")
+  perf_range <- rangeFilterServer("perfect_hits", 0, 200, fixed = "left")
+  mm_range   <- rangeFilterServer("mismatch_hits",0, 500, fixed = "left")
 
  # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
@@ -365,49 +402,51 @@ function(input, output, session) {
       as.double(gsub(' |[)]', '', output[grepl('[0-9]', output)]))
     }
   }
+  ############################&*###########################
+  # filter_function <- function(df,
+  #                             valueX,
+  #                             columname,
+  #                             operator_string) {
+  #   switch(
+  #     operator_string,
+  #     "==" = {
+  #       # Code for when my_string is "=="
+  #       filtered_df <- df %>% filter(.data[[columname]] == valueX)
+  #       return(filtered_df)
+  #     },
+  #     "!=" = {
+  #       # Code for when my_string is "!="
+  #       filtered_df <- df %>% filter(.data[[columname]] != valueX)
+  #       return(filtered_df)
+  #     },
+  #     "<" = {
+  #       # Code for when my_string is "<"
+  #       filtered_df <- df %>% filter(.data[[columname]] < valueX)
+  #       return(filtered_df)
+  #     },
+  #     ">" = {
+  #       # Code for when my_string is ">"
+  #       filtered_df <- df %>% filter(.data[[columname]] > valueX)
+  #       return(filtered_df)
+  #     },
+  #     "Less than <=" = {
+  #       # Code for when my_string is "Less than <="
+  #       filtered_df <- df %>% filter(.data[[columname]] <= valueX)
+  #       return(filtered_df)
+  #     },
+  #     ">=" = {
+  #       # Code for when my_string is ">="
+  #       filtered_df <- df %>% filter(.data[[columname]] >= valueX)
+  #       return(filtered_df)
+  #     },
+  #     {
+  #       # Default case
+  #       return(df)
+  #     }
+  #   )
+  # }
+  ############################&*###########################
   
-  filter_function <- function(df,
-                              valueX,
-                              columname,
-                              operator_string) {
-    switch(
-      operator_string,
-      "==" = {
-        # Code for when my_string is "=="
-        filtered_df <- df %>% filter(.data[[columname]] == valueX)
-        return(filtered_df)
-      },
-      "!=" = {
-        # Code for when my_string is "!="
-        filtered_df <- df %>% filter(.data[[columname]] != valueX)
-        return(filtered_df)
-      },
-      "<" = {
-        # Code for when my_string is "<"
-        filtered_df <- df %>% filter(.data[[columname]] < valueX)
-        return(filtered_df)
-      },
-      ">" = {
-        # Code for when my_string is ">"
-        filtered_df <- df %>% filter(.data[[columname]] > valueX)
-        return(filtered_df)
-      },
-      "Less than <=" = {
-        # Code for when my_string is "Less than <="
-        filtered_df <- df %>% filter(.data[[columname]] <= valueX)
-        return(filtered_df)
-      },
-      ">=" = {
-        # Code for when my_string is ">="
-        filtered_df <- df %>% filter(.data[[columname]] >= valueX)
-        return(filtered_df)
-      },
-      {
-        # Default case
-        return(df)
-      }
-    )
-  }
   # ----------------------------------- Data setup -----------------------------
   # Store all human pre-mRNA sequences
   
@@ -768,10 +807,23 @@ function(input, output, session) {
   )
   ##
   
-  nseq_pmfreq <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_d, "PM_max_freq", input$dropdown_input_d))
+  pm_rng <- pm_range()
+  nseq_pmfreq <- nseq_prefilter - nrow(
+    target_annotation %>%
+      dplyr::mutate(PM_tot_freq = tidyr::replace_na(PM_tot_freq, 0)) %>%
+      dplyr::filter(PM_tot_freq >= pm_rng[1], PM_tot_freq <= pm_rng[2])
+  )
   
-  nseq_accessible <- if (input$linux_input == TRUE) {
-    nseq_accessible <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_c, "accessibility", input$dropdown_input_c))
+  nseq_accessible <- if (isTRUE(input$linux_input)) {
+    acc_rng <- acc_range()
+    nseq_prefilter - nrow(
+      target_annotation %>%
+        dplyr::filter(
+          !is.na(accessibility),
+          accessibility >= acc_rng[1],
+          accessibility <= acc_rng[2]
+        )
+    )
   } else {
     NA_integer_
   }
@@ -806,6 +858,15 @@ function(input, output, session) {
   
   # ----------------------------------- filtering ------------------------------
   
+  apply_range <- function(df, col, rng) {
+    df %>%
+      dplyr::filter(
+        !is.na(.data[[col]]),
+        .data[[col]] >= rng[1],
+        .data[[col]] <= rng[2]
+      )
+  }
+  
   ta <- target_annotation  # startdataset
   print(nrow(target_annotation))
   # 1) ASO ending with G filter
@@ -821,7 +882,7 @@ function(input, output, session) {
   }
   
   # 2) tox_score filter
-  ### commented out for sliding, to get back uncomment
+  ### commented out for sliding, to get back uncomment #########&*##########
   # if (isTRUE(input$tox_input)) {
   #   ta_prev <- ta
   #   ta <- filter_function(ta, input$numeric_input_e, "tox_score", input$dropdown_input_e)
@@ -832,9 +893,8 @@ function(input, output, session) {
   #     showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
   #   }
   # }
-  ###
+  ############&*##########
   
-  ### replacemetn 
   # 2) tox_score filter (using range slider)
   if (isTRUE(input$tox_input)) {
     ta_prev <- ta
@@ -876,7 +936,16 @@ function(input, output, session) {
   # 3) accessibility filter (alleen als linux + checkbox aanstaan)
   if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
     ta_prev <- ta
-    ta <- filter_function(ta, input$numeric_input_c, "accessibility", input$dropdown_input_c)
+    if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
+      ta_prev <- ta
+      rng <- acc_range()
+      ta <- apply_range(ta, "accessibility", rng)
+      
+      if (nrow(ta) == 0) {
+        ta <- ta_prev
+        showNotification("Filter 'accessibility' removed all rows; reverting.", type = "warning")
+      }
+    }
     
     if (nrow(ta) == 0) {
       ta <- ta_prev
@@ -894,7 +963,21 @@ function(input, output, session) {
   # 5) polymorphism frequency filter
   if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
     ta_prev <- ta
-    ta <- filter_function(ta, input$numeric_input_d, "PM_tot_freq", input$dropdown_input_d)
+    if (isTRUE(input$polymorphism_input)) {
+      ta <- ta %>%
+        mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
+    }
+    
+    if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
+      ta_prev <- ta
+      rng <- pm_range()  # c(min,max), min fixed at 0
+      ta <- apply_range(ta, "PM_tot_freq", rng)
+      
+      if (nrow(ta) == 0) {
+        ta <- ta_prev
+        showNotification("Filter 'PM_tot_freq' removed all rows; reverting.", type = "warning")
+      }
+    }
     
     if (nrow(ta) == 0) {
       ta <- ta_prev
@@ -960,29 +1043,38 @@ function(input, output, session) {
   # ----------------------------------- milestone 21 ---------------------------
   print("milestone 21: Matched ASO sequences to potential off-targets (perfect match, one mismatch")
   
-  target_annotation = left_join(target_annotation, uni_tar, by = c('name', 'length'))
-  perform_offt <- TRUE
-  if (isTRUE(input$perfect_input) && isTRUE(input$mismatch_input)) {
-    prefilter <- nrow(target_annotation)
-    target_annotation_filtered <- target_annotation %>%
-      filter(
-        gene_hits_pm <= input$numeric_input_a,
-        gene_hits_1mm <= input$numeric_input_b
-      )
+  target_annotation <- left_join(target_annotation, uni_tar, by = c("name", "length"))
   
+  perform_offt <- TRUE
+  
+  if (isTRUE(input$perfect_input) && isTRUE(input$mismatch_input)) {
+    
+    prefilter <- nrow(target_annotation)
+    
+    pm_max <- perf_range()[2]
+    mm_max <- mm_range()[2]
+    
+    target_annotation_filtered <- target_annotation %>%
+      dplyr::filter(
+        gene_hits_pm <= pm_max,
+        gene_hits_1mm <= mm_max
+      )
     
     postfilter <- nrow(target_annotation_filtered)
     removed <- prefilter - postfilter
-  
-    print(paste0("Filtering Oligo sequences with perfect match < ", input$numeric_input_a, " and 1 mismatch < ", input$numeric_input_b))
+    
+    print(paste0(
+      "Filtering Oligo sequences with perfect matches <= ", pm_max,
+      " and 1 mismatch <= ", mm_max
+    ))
     print(paste0("Rows before filtering: ", prefilter))
     print(paste0("Rows after filtering: ", postfilter))
     print(paste0("Filtering removed ", removed, " possible ASOs."))
-    if (nrow(target_annotation_filtered) != 0){
+    
+    if (postfilter > 0) {
       target_annotation <- target_annotation_filtered
-    } else{
+    } else {
       perform_offt <- FALSE
-      print("Filtering off-targets resulted in no hits. Continuing with unfiltered off-target data")
       showNotification("Filter 'off-targets' removed all rows; reverting.", type = "warning")
     }
   }
@@ -1209,12 +1301,13 @@ function(input, output, session) {
       dplyr::rename(
         !!!setNames(to_rename, column_names[to_rename])
       )
-    
-    df <- df %>%
-      dplyr::mutate(
-        `GC content (%)`         = round(`GC content (%)`, 0)
-      )
-    
+    #############&*#############
+    # df <- df %>%
+    #   dplyr::mutate(
+    #     `GC content (%)`         = round(`GC content (%)`, 0)
+    #   )
+    #############&*#############
+
     main_cols <- c(
       "ASO sequence",
       "Target (DNA)",
@@ -1246,15 +1339,21 @@ function(input, output, session) {
       )
     }
     
-    DT::datatable(
+    dt <- DT::datatable(
       df,
       rownames  = FALSE,
       selection = "single",
       options   = list(
-        dom        = "tip",         
+        dom        = "tip",
         columnDefs = column_defs,
         order      = order_option
       )
+    )
+    
+    DT::formatRound(
+      dt,
+      columns = intersect(c("GC content (%)", "PM total freq.", "PM max freq."), names(df)),
+      digits  = 2
     )
   })
   # ----------------------------- Offtarget analysis ---------------------------

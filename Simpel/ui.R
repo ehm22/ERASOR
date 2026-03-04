@@ -5,45 +5,46 @@ library(shinythemes)
 
 ### for sliders with numeric input boxes
 
-rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1) {
+rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1,
+                          fixed = c("none", "left", "right")) {
+  fixed <- match.arg(fixed)
   ns <- NS(id)
   
   tagList(
-    # Optional label (you can pass NULL to suppress)
     if (!is.null(label)) h4(label),
     
-    fluidRow(
-      column(
-        width = 6,
-        numericInput(
-          inputId = ns("min"),
-          label   = "From:",
-          value   = value[1],
-          min     = min,
-          max     = max,
-          step    = step
-        )
-      ),
-      column(
-        width = 6,
-        numericInput(
-          inputId = ns("max"),
-          label   = "To:",
-          value   = value[2],
-          min     = min,
-          max     = max,
-          step    = step
+    if (fixed == "none") {
+      tagList(
+        fluidRow(
+          column(
+            6,
+            numericInput(ns("min"), "From:", value = value[1], min = min, max = max, step = step)
+          ),
+          column(
+            6,
+            numericInput(ns("max"), "To:",   value = value[2], min = min, max = max, step = step)
+          )
+        ),
+        sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
+      )
+      
+    } else if (fixed == "left") {
+      tagList(
+        numericInput(ns("max"), "To:", value = value, min = min, max = max, step = step),
+        sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
+      )
+      
+    } else { # fixed == "right"
+      tagList(
+        numericInput(ns("min"), "From:", value = value, min = min, max = max, step = step),
+        
+        # ✅ wrap slider so we can style it with CSS
+        div(
+          class = "slider-right-fixed",
+          sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
         )
       )
-    ),
-    sliderInput(
-      inputId = ns("slider"),
-      label   = NULL,
-      min     = min,
-      max     = max,
-      value   = value,
-      step    = step
-    )
+    }
   )
 }
 
@@ -55,7 +56,7 @@ ui <- fluidPage(
   theme = shinythemes::shinytheme("flatly"),
   tags$head(tags$style(
     HTML(
-      "
+            "
       #shiny-notification-panel {
         position: fixed;
         top: calc(50%);
@@ -65,13 +66,32 @@ ui <- fluidPage(
         transform: translate(-50%, -50%);
         z-index: 9999;
       }
-
+      
       .navbar-brand {
         display: flex !important;
         align-items: center !important;
         height: 60px !important;
       }
-    "
+      
+      /* RIGHT-FIXED SLIDER: color should be value -> max (right side) WITHOUT mirroring */
+
+      /* Make the entire track blue */
+      .slider-right-fixed .irs-line {
+        background: #428bca !important;   /* blue */
+        border-color: #428bca !important;
+      }
+      
+      /* Make the default highlight (left part) look like the unhighlighted track */
+      .slider-right-fixed .irs-bar {
+        background: #e5e5e5 !important;   /* gray */
+        border-color: #e5e5e5 !important;
+      }
+      
+      /* Optional: hide the little edge nub */
+      .slider-right-fixed .irs-bar-edge {
+        display: none !important;
+      }
+      "
     )
   )),
   tags$nav(
@@ -222,179 +242,6 @@ ui <- fluidPage(
           column(
             12,
             
-            h5(tagList(
-              HTML("<b>Off-targets with perfect matches</b> "),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "Desired number of perfectly complementary off-targets. ",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                4,
-                selectInput(
-                  "dropdown_input_a",
-                  "",
-                  selected = "==",
-                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
-                )
-              ),
-              column(5, numericInput("numeric_input_a", "", value = 1, min = 0)),
-              checkboxInput("perfect_input", "Enable", value = TRUE)
-            ),
-            
-            h5(tagList(
-              HTML("<b>Off-targets with 1 mismatch </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "Desired number of off-targets with 1 mismatch/indel. Greater ranges lead to longer runtimes.",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                4,
-                selectInput(
-                  "dropdown_input_b",
-                  "",
-                  selected = "Less than <=",
-                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
-                )
-              ),
-              column(5, numericInput("numeric_input_b", "", value = 10, min = 0)),
-              checkboxInput("mismatch_input", "Enable", value = TRUE)
-            ),
-            
-            h5(tagList(
-              HTML("<b>Accessibility </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs. ",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                4,
-                selectInput(
-                  "dropdown_input_c",
-                  "",
-                  selected = ">",
-                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
-                )
-              ),
-              column(5, numericInput("numeric_input_c", "", value = 1E-6, min = 0)),
-              checkboxInput("Accessibility_input", "Enable", value =
-                              TRUE)
-            ),
-            
-            h5(tagList(
-              HTML("<b>Polymorphism frequence </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "This quality control score estimates the probability that a polymorphism (SNP) is present in the target mRNA sequences. Lower values are preferred, as they indicate a reduced likelihood of polymorphic variation.",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                4,
-                selectInput(
-                  "dropdown_input_d",
-                  "",
-                  selected = "<",
-                  choices = c("==", "!=", "<", ">", "Less than <=", ">=")
-                )
-              ),
-              column(5, numericInput("numeric_input_d", "", value = 0.05, min = 0, step = 0.01)),
-              checkboxInput("Poly_input", "Enable", value = TRUE)
-            ),
-            #### commented out, delete or comment back in if you kno wwhat to do
-            # h5(tagList(
-            #   HTML("<b>Toxicity score </b>"),
-            #   tags$span(
-            #     tags$img(
-            #       src = "questionmark.png",
-            #       height = "20px",
-            #       style = "margin-bottom: 3px;"
-            #     ),
-            #     title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
-            #     `data-toggle` = "tooltip",
-            #     `data-placement` = "right",
-            #     style = "cursor: pointer;"
-            #   )
-            # )),
-            # fluidRow(
-            #   column(
-            #     4,
-            #     selectInput(
-            #       "dropdown_input_e",
-            #       "",
-            #       selected = ">=",
-            #       choices = c("==", "!=", "<", ">", "Less than <=", ">=")
-            #     )
-            #   ),
-            #   column(5, numericInput("numeric_input_e", "", value = 60, min = 0)),
-            #   checkboxInput("tox_input", "Enable", value = TRUE)
-            # ),
-            
-            #### replaces the commented out code from above
-            h5(tagList(
-              HTML("<b>Toxicity score </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
-                `data-toggle` = "tooltip",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                9,
-                # New linked slider + numeric inputs for toxicity score
-                rangeFilterUI(
-                  id    = "tox_score",    # <-- module ID
-                  label = NULL,           # we already have the h5 label above
-                  min   = 0,              # adjust if your tox_score has a known range
-                  max   = 100,
-                  value = c(60, 100),     # default: >= 60
-                  step  = 1
-                )
-              ),
-              column(
-                3,
-                checkboxInput("tox_input", "Enable", value = TRUE)
-              )
-            ),
             #### GC content filter ####
             h5(tagList(
               HTML("<b>GC content (%) </b>"),
@@ -418,15 +265,169 @@ ui <- fluidPage(
                   min   = 0,
                   max   = 100,
                   value = c(40, 60),      # default GC% window, adjust as you like
-                  step  = 1
+                  step  = 1,
+                  fixed = "none"
                 )
               ),
               column(
                 3,
-                checkboxInput("gc_input", "Enable", value = FALSE)
+                checkboxInput("gc_input", "Enable", value = TRUE)
               )
             ),
-          
+            ####
+            #### Tox score filter ####
+            h5(tagList(
+              HTML("<b>Toxicity score </b>"),
+              tags$span(
+                tags$img(
+                  src = "questionmark.png",
+                  height = "20px",
+                  style = "margin-bottom: 3px;"
+                ),
+                title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
+                `data-toggle` = "tooltip",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "tox_score",    
+                  label = NULL,           
+                  min   = 0,              
+                  max   = 136,
+                  value = 60,     # default: 60
+                  step  = 1,
+                  fixed = "right"
+                )
+              ),
+              column(
+                3,
+                checkboxInput("tox_input", "Enable", value = TRUE)
+              )
+            ),
+            ####
+            h5(tagList(
+              HTML("<b>Off-targets with perfect matches</b> "),
+              tags$span(
+                tags$img(
+                  src = "questionmark.png",
+                  height = "20px",
+                  style = "margin-bottom: 3px;"
+                ),
+                title = "Desired number of perfectly complementary off-targets. ",
+                `data-toggle` = "tooltip",
+                `data-placement` = "right",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "perfect_hits",
+                  label = NULL,
+                  min   = 0,
+                  max   = 5,        # pick a sensible max for your runs
+                  value = 1,    # default: allow <= 1 perfect match
+                  step  = 1,
+                  fixed = "left"      # left fixed at 0, user only sets max
+                )
+              ),
+              column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
+            ),
+            
+            h5(tagList(
+              HTML("<b>Off-targets with 1 mismatch </b>"),
+              tags$span(
+                tags$img(
+                  src = "questionmark.png",
+                  height = "20px",
+                  style = "margin-bottom: 3px;"
+                ),
+                title = "Desired number of off-targets with 1 mismatch/indel. Greater ranges lead to longer runtimes.",
+                `data-toggle` = "tooltip",
+                `data-placement` = "right",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "mismatch_hits",
+                  label = NULL,
+                  min   = 0,
+                  max   = 100,         # choose based on expected results
+                  value = 10,    # default: allow <= 10 one-mismatch hits
+                  step  = 1,
+                  fixed = "left"
+                )
+              ),
+              column(3, checkboxInput("mismatch_input", "Enable", value = TRUE))
+            ),
+            #### PM filter ####
+            h5(tagList(
+              HTML("<b>Polymorphism frequency </b>"),
+              tags$span(
+                tags$img(
+                  src = "questionmark.png",
+                  height = "20px",
+                  style = "margin-bottom: 3px;"
+                ),
+                title = "This quality control score estimates the probability that a polymorphism (SNP) is present in the target mRNA sequences. Lower values are preferred.",
+                `data-toggle` = "tooltip",
+                `data-placement` = "right",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "pm_freq",
+                  label = NULL,
+                  min   = 0,
+                  max   = 1,
+                  value = 0.05,
+                  step  = 0.01,
+                  fixed = "left"
+                )
+              ),
+              column(3, checkboxInput("Poly_input", "Enable", value = TRUE))
+            ),
+            ####
+            #### accessibility filter ####
+            h5(tagList(
+              HTML("<b>Accessibility </b>"),
+              tags$span(
+                tags$img(
+                  src = "questionmark.png",
+                  height = "20px",
+                  style = "margin-bottom: 3px;"
+                ),
+                title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs. ",
+                `data-toggle` = "tooltip",
+                `data-placement` = "right",
+                style = "cursor: pointer;"
+              )
+            )),
+            fluidRow(
+              column(
+                9,
+                rangeFilterUI(
+                  id    = "accessibility",
+                  label = NULL,
+                  min   = 0,
+                  max   = 1,            
+                  value = c(0, 0.000001),     
+                  step  = 0.000001,    
+                  fixed = "none"       
+                )
+              ),
+              column(3, checkboxInput("Accessibility_input", "Enable", value = TRUE))
+            ),
             ####
             fluidRow(
               column(6, actionButton("run_button", "Run")),
@@ -602,8 +603,7 @@ ui <- fluidPage(
   )
   ),
   tags$script(
-    HTML(
-      '$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });'
-    )
-  )
+    HTML('$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });'))
 )
+
+
