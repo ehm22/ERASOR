@@ -154,7 +154,7 @@ function(input, output, session) {
   showNotification(
     "Finished loading",
     type = "default",
-    duration = NULL,
+    duration = 10,
     closeButton = TRUE
   )
   
@@ -321,7 +321,7 @@ function(input, output, session) {
     showNotification(
       "Script started",
       type = "default",
-      duration = NULL,
+      duration = 10,
       closeButton = TRUE
     )
     
@@ -898,20 +898,6 @@ function(input, output, session) {
   }
   
   # 2) tox_score filter
-  ### commented out for sliding, to get back uncomment #########&*##########
-  # if (isTRUE(input$tox_input)) {
-  #   ta_prev <- ta
-  #   ta <- filter_function(ta, input$numeric_input_e, "tox_score", input$dropdown_input_e)
-  #   
-  #   if (nrow(ta) == 0) {
-  #     ta <- ta_prev
-  #     message("Filter 'tox_score' removed all rows; reverting to previous dataset.")
-  #     showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
-  #   }
-  # }
-  ############&*##########
-  
-  # 2) tox_score filter (using range slider)
   if (isTRUE(input$tox_input)) {
     ta_prev <- ta
     rng <- tox_range()  # c(min, max)
@@ -929,7 +915,7 @@ function(input, output, session) {
       showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
     }
   }
-  # 2b) GC content filter (using range slider) ----
+  # 2b) GC content filter 
   if (isTRUE(input$gc_input)) {   
     ta_prev <- ta
     rng <- gc_range()  # c(min, max)
@@ -1260,6 +1246,7 @@ function(input, output, session) {
       "gc_content", 
       "tox_score",
       "off_target_score",
+      "n_distance_0",
       "n_distance_1",
       "n_distance_2",
       # "pli_score", # once implemented
@@ -1274,7 +1261,6 @@ function(input, output, session) {
       "PM_tot_freq",
       "PM_max_freq",
       "PM_count",
-      "n_distance_0",
       "gene_hits_pm", 
       "gene_hits_1mm",
       "NoRepeats",
@@ -1294,6 +1280,7 @@ function(input, output, session) {
       off_target_score       = "Off-target score",
       n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
       n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
+      n_distance_0           = "Perfect matches (GGGenome)",
       # pli_score              = "pLI score".
       sec_energy             = "ASO self-folding energy",
       duplex_energy          = "ASO duplex energy",
@@ -1306,7 +1293,6 @@ function(input, output, session) {
       PM_tot_freq            = "PM total freq.",
       PM_max_freq            = "PM max freq.",
       PM_count               = "PM count",
-      n_distance_0           = "Perfect matches (GGGenome)",
       gene_hits_pm           = "Perfect matches (Peterson)",
       gene_hits_1mm          = "Off-targets 1 mismatch (Peterson)",
       NoRepeats              = "Number of repeats",
@@ -1317,12 +1303,6 @@ function(input, output, session) {
       dplyr::rename(
         !!!setNames(to_rename, column_names[to_rename])
       )
-    #############&*#############
-    # df <- df %>%
-    #   dplyr::mutate(
-    #     `GC content (%)`         = round(`GC content (%)`, 0)
-    #   )
-    #############&*#############
 
     main_cols <- c(
       "ASO sequence",
@@ -1333,6 +1313,7 @@ function(input, output, session) {
       "GC content (%)",
       "Acute neurotox score",
       "Off-target score",
+      "Perfect matches (GGGenome)",
       "Off-targets 1 mismatch (GGGenome)",
       "Off-targets 2 mismatches (GGGenome)" # , 
       # "pLI score"
@@ -1369,7 +1350,7 @@ function(input, output, session) {
     DT::formatRound(
       dt,
       columns = intersect(c("GC content (%)", "PM total freq.", "PM max freq."), names(df)),
-      digits  = 2
+      digits  = 0
     )
   })
   # ----------------------------- Offtarget analysis ---------------------------
@@ -1706,9 +1687,6 @@ function(input, output, session) {
       mod_5prime = input$mod_5prime,
       mod_3prime = input$mod_3prime
     )
-    ####&*##### 
-    print(colnames(rnaseh_data))
-    ####&*##### 
     
     # Stores the data is usable variable. 
     rnaseh_stored(rnaseh_data)
@@ -1901,9 +1879,6 @@ function(input, output, session) {
           mod_5prime = 0,
           mod_3prime = 0
         )
-        ####&*##### 
-        print(colnames(rnaseh_data))
-        ####&*#####
         rnaseh_stored(rnaseh_data)
         
         output$rnaseh_title <- renderText(paste0("RNase H results for: ", row_data$name))

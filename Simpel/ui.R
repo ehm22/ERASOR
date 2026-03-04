@@ -30,13 +30,13 @@ rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1,
       
     } else if (fixed == "left") {
       tagList(
-        numericInput(ns("max"), "To:", value = value, min = min, max = max, step = step),
+        numericInput(ns("max"), "Less or equal to:", value = value, min = min, max = max, step = step),
         sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
       )
       
     } else { # fixed == "right"
       tagList(
-        numericInput(ns("min"), "From:", value = value, min = min, max = max, step = step),
+        numericInput(ns("min"), "Greater or equal to:", value = value, min = min, max = max, step = step),
         
         # ✅ wrap slider so we can style it with CSS
         div(
@@ -109,7 +109,7 @@ ui <- fluidPage(
         selectizeInput(
           "ensemble_id_input",
           label = tagList(
-            "Enter Ensembl id:  ",
+            "Enter Gene or Ensembl ID:  ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
@@ -183,7 +183,7 @@ ui <- fluidPage(
         checkboxInput(
           "Conserved_input",
           label = tagList(
-            "Conserved in mouse ",
+            "Conserved in Mus musculus ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
@@ -277,7 +277,7 @@ ui <- fluidPage(
             ####
             #### Tox score filter ####
             h5(tagList(
-              HTML("<b>Toxicity score </b>"),
+              HTML("<b>Acute neurotoxicity score (Hagedoorn) </b>"),
               tags$span(
                 tags$img(
                   src = "questionmark.png",
