@@ -42,6 +42,22 @@ format_elapsed <- function(start_time, end_time = Sys.time()) {
   
   paste(parts, collapse = " ")
 }
+
+# Helper function for renaming coumsn in RnaseH table
+
+rename_rnaseh_cols <- function(df) {
+  display_map <- c(
+    position = "Position (nt)",
+    average    = "RNase H score",
+    window = "Nucleotide window"
+  )
+  
+  nm <- names(df)
+  nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
+  names(df) <- make.unique(nm2, sep = " (dup) ")
+  df
+}
+
 #-------------------------------------------------------------------------------
 
 #################### test for sliding filter with numeric boxes ################
@@ -1500,13 +1516,12 @@ function(input, output, session) {
   
   })
 
-  output$offtarget_results <- DT::renderDataTable({
+  output$offtarget_results <- DT::renderDT({
     req(current_offtargets())
-    
     df <- current_offtargets()
     
     df_view <- df %>%
-      select(-c(
+      dplyr::select(-c(
         line,
         subject_seq,
         query_seq,
@@ -1517,7 +1532,7 @@ function(input, output, session) {
         snippet_end,
         name
       )) %>%
-      select(
+      dplyr::select(
         gene_name,
         transcript,
         match_string,
@@ -1529,19 +1544,41 @@ function(input, output, session) {
         distance,
         offtarget_accessibility,
         oe_lof,
-        everything()
+        dplyr::everything()
       )
     
-    distance_col <- which(names(df_view) == "distance") - 1  # DT is 0-based
+    # ---- SAFE display rename (no collisions) ----
+    display_map <- c(
+      gene_name               = "Gene symbol",
+      transcript              = "Transcript (Ensembl)",
+      match_string            = "Match (alignment)",
+      length                  = "Length (nt)",
+      matches                 = "Matches",
+      mismatches              = "Mismatches",
+      deletions               = "Deletions",
+      insertions              = "Insertions",
+      distance                = "Edit distance",
+      offtarget_accessibility = "Accessibility (off-target)",
+      oe_lof                  = "GnomAD oe_lof"
+    )
+    
+    # apply mapping only where columns exist
+    nm <- names(df_view)
+    nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
+    
+    # enforce uniqueness so DT never crashes
+    names(df_view) <- make.unique(nm2, sep = " (dup) ")
+    
+    # ordering: find the (possibly renamed) distance column
+    dist_idx <- which(names(df_view) == "Edit distance")
+    if (length(dist_idx) == 0) dist_idx <- which(grepl("^Edit distance", names(df_view)))[1]
+    distance_col <- dist_idx - 1  # DT uses 0-based
     
     DT::datatable(
       df_view,
       rownames = FALSE,
-      options = list(
-        order = list(list(distance_col, "asc"))
-      )
+      options = list(order = list(list(distance_col, "asc")))
     )
-    
   })
   
   output$download_offtarget <- downloadHandler(
@@ -1669,13 +1706,17 @@ function(input, output, session) {
       mod_5prime = input$mod_5prime,
       mod_3prime = input$mod_3prime
     )
+    ####&*##### 
+    print(colnames(rnaseh_data))
+    ####&*##### 
     
     # Stores the data is usable variable. 
     rnaseh_stored(rnaseh_data)
     
     # Renders table output for rnaseh_results. 
-    output$rnaseh_results <- renderDataTable({
-      datatable(rnaseh_data, selection = list(mode = 'single', selected = 1))
+    output$rnaseh_results <- DT::renderDT({
+      rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
+      DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
     })
     
     # Renders cleavage_visual div on rnaseh page.
@@ -1860,7 +1901,9 @@ function(input, output, session) {
           mod_5prime = 0,
           mod_3prime = 0
         )
-        
+        ####&*##### 
+        print(colnames(rnaseh_data))
+        ####&*#####
         rnaseh_stored(rnaseh_data)
         
         output$rnaseh_title <- renderText(paste0("RNase H results for: ", row_data$name))
@@ -1877,9 +1920,9 @@ function(input, output, session) {
           )
         })
         
-        output$rnaseh_results <- renderDataTable({
-          datatable(rnaseh_data,
-                    selection = list(mode = "single", selected = 1))
+        output$rnaseh_results <- DT::renderDT({
+          rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
+          DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
         })
         
         updateTabsetPanel(session, "tabs_main", selected = "RNase H cleavage results")
