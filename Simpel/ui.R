@@ -5,8 +5,20 @@ library(shinythemes)
 
 ### for sliders with numeric input boxes
 
-rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1,
-                          fixed = c("none", "left", "right")) {
+rangeFilterUI <- function(
+    id, 
+    label = NULL, 
+    min, 
+    max, 
+    value, 
+    step = 1,
+    fixed = c("none", "left", "right"),
+    label_from = "From:",
+    label_to = "To:",
+    label_left = "Less or equal to:",
+    label_right = "Greater or equal to:"
+) {
+  
   fixed <- match.arg(fixed)
   ns <- NS(id)
   
@@ -18,11 +30,11 @@ rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1,
         fluidRow(
           column(
             6,
-            numericInput(ns("min"), "From:", value = value[1], min = min, max = max, step = step)
+            numericInput(ns("min"), label_from, value = value[1], min = min, max = max, step = step)
           ),
           column(
             6,
-            numericInput(ns("max"), "To:",   value = value[2], min = min, max = max, step = step)
+            numericInput(ns("max"), label_to, value = value[2], min = min, max = max, step = step)
           )
         ),
         sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
@@ -30,15 +42,13 @@ rangeFilterUI <- function(id, label = NULL, min, max, value, step = 1,
       
     } else if (fixed == "left") {
       tagList(
-        numericInput(ns("max"), "Less or equal to:", value = value, min = min, max = max, step = step),
+        numericInput(ns("max"), label_left, value = value, min = min, max = max, step = step),
         sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
       )
       
     } else { # fixed == "right"
       tagList(
-        numericInput(ns("min"), "Greater or equal to:", value = value, min = min, max = max, step = step),
-        
-        # ✅ wrap slider so we can style it with CSS
+        numericInput(ns("min"), label_right, value = value, min = min, max = max, step = step),
         div(
           class = "slider-right-fixed",
           sliderInput(ns("slider"), label = NULL, min = min, max = max, value = value, step = step)
@@ -299,7 +309,8 @@ ui <- fluidPage(
                   max   = 136,
                   value = 60,     # default: 60
                   step  = 1,
-                  fixed = "right"
+                  fixed = "right",
+                  label_right = "Minimum Tox. Score"
                 )
               ),
               column(
@@ -332,7 +343,8 @@ ui <- fluidPage(
                   max   = 5,        # pick a sensible max for your runs
                   value = 1,    # default: allow <= 1 perfect match
                   step  = 1,
-                  fixed = "left"      # left fixed at 0, user only sets max
+                  fixed = "left",
+                  label_left = "Maximum number of perfect matches"
                 )
               ),
               column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
@@ -362,7 +374,8 @@ ui <- fluidPage(
                   max   = 100,         # choose based on expected results
                   value = 10,    # default: allow <= 10 one-mismatch hits
                   step  = 1,
-                  fixed = "left"
+                  fixed = "left",
+                  label_left = "Maximum number of off-targets with 1 mismatch"
                 )
               ),
               column(3, checkboxInput("mismatch_input", "Enable", value = TRUE))
@@ -430,8 +443,9 @@ ui <- fluidPage(
             ),
             ####
             fluidRow(
-              column(6, actionButton("run_button", "Run")),
-              column(6, actionButton("reset_defaults", "Set to default", style = "margin-left: -33px;"))
+              column(4, actionButton("run_button", "Run")),
+              column(4, actionButton("cancel_run", "Cancel run", class = "btn-danger", style = "margin-left: -10px;")),
+              column(4, actionButton("reset_defaults", "Set to default"))
             )),
           )
         )
@@ -494,7 +508,7 @@ ui <- fluidPage(
                 style = "cursor: pointer;"
               )
             ),
-            value = 0,
+            value = 5,
             min = 0,
             max = 10,
             width = "60%"
@@ -512,7 +526,7 @@ ui <- fluidPage(
                 style = "cursor: pointer;"
               )
             ),
-            value = 0,
+            value = 5,
             min = 0,
             max = 10,
             width = "60%"
