@@ -268,21 +268,6 @@ function(input, output, session) {
     }
   })
   
-  # prevent input of negative values for filters
-  ##############&*################
-  # ids <- c( "numeric_input_d", "numeric_input_c",
-  #          "numeric_input_a", "numeric_input_b") # "numeric_input_e", out if slidng
-  # 
-  # lapply(ids, function(this_id) {
-  #   observe({
-  #     val <- input[[this_id]]
-  #     if (!is.null(val) && !is.na(val) && val < 0) {
-  #       updateNumericInput(session, this_id, value = 0)
-  #     }
-  #   })
-  # })
-  ###############&*############################
-  
   # make output table collapsable
   show_all_cols <- reactiveVal(FALSE)
   
@@ -418,50 +403,6 @@ function(input, output, session) {
       as.double(gsub(' |[)]', '', output[grepl('[0-9]', output)]))
     }
   }
-  ############################&*###########################
-  # filter_function <- function(df,
-  #                             valueX,
-  #                             columname,
-  #                             operator_string) {
-  #   switch(
-  #     operator_string,
-  #     "==" = {
-  #       # Code for when my_string is "=="
-  #       filtered_df <- df %>% filter(.data[[columname]] == valueX)
-  #       return(filtered_df)
-  #     },
-  #     "!=" = {
-  #       # Code for when my_string is "!="
-  #       filtered_df <- df %>% filter(.data[[columname]] != valueX)
-  #       return(filtered_df)
-  #     },
-  #     "<" = {
-  #       # Code for when my_string is "<"
-  #       filtered_df <- df %>% filter(.data[[columname]] < valueX)
-  #       return(filtered_df)
-  #     },
-  #     ">" = {
-  #       # Code for when my_string is ">"
-  #       filtered_df <- df %>% filter(.data[[columname]] > valueX)
-  #       return(filtered_df)
-  #     },
-  #     "Less than <=" = {
-  #       # Code for when my_string is "Less than <="
-  #       filtered_df <- df %>% filter(.data[[columname]] <= valueX)
-  #       return(filtered_df)
-  #     },
-  #     ">=" = {
-  #       # Code for when my_string is ">="
-  #       filtered_df <- df %>% filter(.data[[columname]] >= valueX)
-  #       return(filtered_df)
-  #     },
-  #     {
-  #       # Default case
-  #       return(df)
-  #     }
-  #   )
-  # }
-  ############################&*###########################
   
   # ----------------------------------- Data setup -----------------------------
   # Store all human pre-mRNA sequences
