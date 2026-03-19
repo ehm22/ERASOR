@@ -83,6 +83,10 @@ ui <- fluidPage(
         height: 60px !important;
       }
       
+       .no-minor-ticks .irs-grid-pol.small {
+         display: none;
+      }
+      
       /* RIGHT-FIXED SLIDER: color should be value -> max (right side) WITHOUT mirroring */
 
       /* Make the entire track blue */
@@ -119,14 +123,14 @@ ui <- fluidPage(
         selectizeInput(
           "ensemble_id_input",
           label = tagList(
-            "Enter Gene or Ensembl ID:  ",
+            "Enter Gene or Ensembl ID (ENSG…):  ",
             tags$span(
               tags$img(
                 src = "questionmark.png",
                 height = "20px",
                 style = "margin-bottom: 3px;"
               ),
-              title = "Please enter a valid Ensembl Gene ID (ENSG…) for the gene of interest.",
+              title = "Please enter a gene, the script does not support transcript inputs.",
               `data-placement` = "right",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
@@ -142,18 +146,29 @@ ui <- fluidPage(
         ),
         checkboxInput(
           "single_aso_input",
-          label = "Single ASO analysis, enter ASO sequence:",
+          label = "Get characteristics for specific ASOs",
           value = FALSE
         ),
+        
         conditionalPanel(
           condition = "input.single_aso_input == true",
-          textInput(
-            "aso_seq_input",
-            label = "",
-            value = "",
-            placeholder = "e.g., GCCTCAGTCTGCTTCGCACC"
+          tagList(
+            textAreaInput(
+              "aso_seq_input",
+              label = NULL,
+              value = "",
+              placeholder = "Enter ASO sequences separated by comma, point or white space.",
+              rows = 5
+            ),
+            tags$small(
+              "Only sequences containing A, C, G, and T are recognized. "
+            ),
+            br(),
+            strong("Detected ASO sequences:"),
+            verbatimTextOutput("parsed_asos")
           )
-        ),
+        )
+        ,
         checkboxInput(
           "polymorphism_input",
           label = tagList(
@@ -182,7 +197,7 @@ ui <- fluidPage(
                 height = "20px",
                 style = "margin-bottom: 3px;"
               ),
-              title = "Filters ASO sequences ending with G. These sequences have a higher chance to induce toxicity. ",
+              title = "Removes ASO sequences ending with G. These sequences have a higher chance to induce toxicity. ",
               `data-placement` = "right",
               `data-toggle` = "tooltip",
               style = "cursor: pointer;"
@@ -226,26 +241,29 @@ ui <- fluidPage(
           ),
           value = TRUE
         ),
-        sliderInput(
-          "oligo_length_range",
-          label = tagList(
-            "ASO length: ",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
+        div(
+          class = "no-minor-ticks", 
+            sliderInput(
+              "oligo_length_range",
+              label = tagList(
+                "ASO length: ",
+                tags$span(
+                  tags$img(
+                    src = "questionmark.png",
+                    height = "20px",
+                    style = "margin-bottom: 3px;"
+                  ),
+                  title = "Longer oligo lengths and a wider range of different lengths leads to longer runtime, we recommend a range of 3 lengths",
+                  `data-placement` = "right",
+                  `data-toggle` = "tooltip",
+                  style = "cursor: pointer;"
+                )
               ),
-              title = "Longer oligo lengths and a wider range of different lengths leads to longer runtime, we recommend a range of 3 lengths",
-              `data-placement` = "right",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
+              min = 15,
+              max = 25,
+              value = c(18, 20)
             )
           ),
-          min = 15,
-          max = 25,
-          value = c(18, 20)
-        ),
         div(
           id = "filters",
         fluidRow(
@@ -255,16 +273,6 @@ ui <- fluidPage(
             #### GC content filter ####
             h5(tagList(
               HTML("<b>GC content (%) </b>"),
-              tags$span(
-                tags$img(
-                  src   = "questionmark.png",
-                  height = "20px",
-                  style  = "margin-bottom: 3px;"
-                ),
-                title = "GC percentage of the ASO sequence. Extreme GC content may affect binding and specificity.",
-                `data-toggle` = "tooltip",
-                style = "cursor: pointer;"
-              )
             )),
             fluidRow(
               column(
@@ -327,27 +335,30 @@ ui <- fluidPage(
                   height = "20px",
                   style = "margin-bottom: 3px;"
                 ),
-                title = "Desired number of perfectly complementary off-targets. ",
+                title = "Number of off-targets, which are perfect complements to the ASO. ",
                 `data-toggle` = "tooltip",
                 `data-placement` = "right",
                 style = "cursor: pointer;"
               )
             )),
             fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "perfect_hits",
-                  label = NULL,
-                  min   = 0,
-                  max   = 5,        # pick a sensible max for your runs
-                  value = 1,    # default: allow <= 1 perfect match
-                  step  = 1,
-                  fixed = "left",
-                  label_left = "Maximum number of perfect matches"
-                )
-              ),
-              column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
+              div(
+                class = "no-minor-ticks", 
+                column(
+                  9,
+                  rangeFilterUI(
+                    id    = "perfect_hits",
+                    label = NULL,
+                    min   = 0,
+                    max   = 5,        # pick a sensible max for your runs
+                    value = 1,    # default: allow <= 1 perfect match
+                    step  = 1,
+                    fixed = "left",
+                    label_left = "Maximum number of perfect matches"
+                  )
+                ),
+                column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
+              )
             ),
             
             h5(tagList(
@@ -371,7 +382,7 @@ ui <- fluidPage(
                   id    = "mismatch_hits",
                   label = NULL,
                   min   = 0,
-                  max   = 100,         # choose based on expected results
+                  max   = 50,         # choose based on expected results
                   value = 10,    # default: allow <= 10 one-mismatch hits
                   step  = 1,
                   fixed = "left",

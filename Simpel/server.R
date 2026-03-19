@@ -150,15 +150,48 @@ rangeFilterServer <- function(id, min_allowed, max_allowed,
 function(input, output, session) {
 
   # ----------------------------------- Notifications UI -----------------------
-  # Notification stays until clicked away
-  showNotification(
-    "Finished loading",
-    type = "default",
-    duration = 10,
-    closeButton = TRUE
+  
+  # startup notification 
+  loading_note <- showNotification(
+    "Please wait. Loading...",
+    type = "message",
+    duration = NULL,
+    closeButton = FALSE
   )
   
-  ################################# ensembl autocomplete#############
+  # ----------------------------- GGGenome startup check -----------------------
+  check_gggenome <- function() {
+    tryCatch({
+      all_offt("ACTGACTGACTGACTGACTG", mismatches_allowed = 0)
+      TRUE
+    }, error = function(e) {
+      FALSE
+    })
+  }
+  
+  gggenome_available <- reactiveVal(NULL)
+  
+  observeEvent(TRUE, {
+    available <- check_gggenome()
+    gggenome_available(available)
+    
+    if (isTRUE(available)) {
+      showNotification(
+        "GGGenome is available.",
+        type = "message",
+        duration = NULL
+      )
+    } else {
+      showNotification(
+        "GGGenome is currently unavailable.",
+        type = "error",
+        duration = NULL
+      )
+    }
+    
+  }, once = TRUE)
+  
+  ############### ensembl autocomplete #############
   # ---- Ensembl autocomplete: build dropdown choices once at startup ----
   
   # Load TxDb just for gene list (lighter than full analysis pipeline)
@@ -242,7 +275,46 @@ function(input, output, session) {
       server   = TRUE
     )
   })
+  
+  session$onFlushed(function() {
+    removeNotification(loading_note)
+    
+    showNotification(
+      "Finished loading",
+      type = "default",
+      duration = 10,
+      closeButton = TRUE
+    )
+  }, once = TRUE)
   ######################################################################
+  
+  # ----------------------------- ASO parser preview -----------------------------
+  parsed_asos <- reactive({
+    req(input$single_aso_input)
+    
+    raw_text <- toupper(trimws(if (is.null(input$aso_seq_input)) "" else input$aso_seq_input))
+    
+    if (raw_text == "") {
+      return(character(0))
+    }
+    
+    asos <- regmatches(raw_text, gregexpr("[ACGT]+", raw_text))[[1]]
+    asos <- unique(asos[nchar(asos) > 0])
+    asos
+  })
+  
+  output$parsed_asos <- renderText({
+    req(input$single_aso_input)
+    
+    asos <- parsed_asos()
+    
+    if (length(asos) == 0) {
+      return("No valid ASO sequences detected.")
+    }
+    
+    paste0(seq_along(asos), ". ", asos, collapse = "\n")
+  })
+  # -------------------------------------------------------------------
   
   # Disable filters when selecting single ASO input
   
@@ -301,6 +373,14 @@ function(input, output, session) {
  # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
   observeEvent(input$run_button, {
+    if (isTRUE(input$single_aso_input) && length(parsed_asos()) == 0) {
+    showNotification(
+      "No valid ASO sequences detected. Please enter sequences containing only A, C, G, and T.",
+      type = "error",
+      duration = 8
+    )
+    return(NULL)
+  }
     start_time <- Sys.time()
  
     showNotification(
@@ -488,12 +568,26 @@ function(input, output, session) {
   
   target_annotation$name = names(target_regions)
   
+  # initliaze pm columns to avoi dcrash when pm calcualtation is disabled 
+  target_annotation$PM_tot_freq <- NA_real_
+  target_annotation$PM_max_freq <- NA_real_
+  target_annotation$PM_count    <- NA_real_
+
   if (isTRUE(input$single_aso_input)) {
-    rev_comp <- reverseComplement(DNAString(input$aso_seq_input))
-    rev_comp_str <- as.character(rev_comp)
-    target_annotation <- target_annotation[target_annotation$name == rev_comp_str, ]
+    aso_matches <- parsed_asos()
+    
+    if (length(aso_matches) > 0) {
+      rev_comps <- as.character(
+        reverseComplement(DNAStringSet(aso_matches))
+      )
+      
+      target_annotation <- target_annotation[target_annotation$name %in% rev_comps, ]
+      target_annotation$input_order <- match(target_annotation$name, rev_comps)
+      target_annotation <- target_annotation[order(target_annotation$input_order), ]
+    } else {
+      target_annotation <- target_annotation[0, ]
+    }
   }
-  
   # ----------------------------------- milestone 6 ----------------------------
   print("milestone6: Enumerated all possible ASO target sequences")
   
@@ -691,7 +785,15 @@ function(input, output, session) {
       target_annotation,
       PM_freq,
       by = c("name" = "name", "chr_start" = "chr_start_anno")
-    )
+    ) %>%
+      mutate(
+        PM_tot_freq = coalesce(PM_tot_freq.y, PM_tot_freq.x),
+        PM_max_freq = coalesce(PM_max_freq.y, PM_max_freq.x),
+        PM_count    = coalesce(PM_count.y, PM_count.x)
+      ) %>%
+      select(-PM_tot_freq.x, -PM_tot_freq.y,
+             -PM_max_freq.x, -PM_max_freq.y,
+             -PM_count.x, -PM_count.y)
   }
   
   
@@ -763,13 +865,19 @@ function(input, output, session) {
       )
   )
   ##
+
+  nseq_pmfreq <- if (isTRUE(input$polymorphism_input)) {
+    pm_rng <- pm_range()
+    
+    nseq_prefilter - nrow(
+      target_annotation %>%
+        dplyr::mutate(PM_tot_freq = tidyr::replace_na(PM_tot_freq, 0)) %>%
+        dplyr::filter(PM_tot_freq >= pm_rng[1], PM_tot_freq <= pm_rng[2])
+    )
+  } else {
+    NA_integer_
+  }
   
-  pm_rng <- pm_range()
-  nseq_pmfreq <- nseq_prefilter - nrow(
-    target_annotation %>%
-      dplyr::mutate(PM_tot_freq = tidyr::replace_na(PM_tot_freq, 0)) %>%
-      dplyr::filter(PM_tot_freq >= pm_rng[1], PM_tot_freq <= pm_rng[2])
-  )
   
   nseq_accessible <- if (isTRUE(input$linux_input)) {
     acc_rng <- acc_range()
@@ -1024,7 +1132,12 @@ function(input, output, session) {
   # ----------------------------------- milestone 22 ---------------------------
   print("milestone 22: Filtered ASOs with too many off targets")
   
-  target_annotation <- target_annotation[order(target_annotation$gene_hits_pm, target_annotation$gene_hits_1mm), ]
+  if (isTRUE(input$single_aso_input) && "input_order" %in% names(target_annotation)) {
+    target_annotation <- target_annotation[order(target_annotation$input_order), ]
+  } else {
+    target_annotation <- target_annotation[order(target_annotation$gene_hits_pm, target_annotation$gene_hits_1mm), ]
+  }
+  
   target_annotation <- head(target_annotation, 1000)
   
   if (isTRUE(perform_offt)) {
@@ -1178,7 +1291,7 @@ function(input, output, session) {
     df <- target_annotation
     
     column_order <- c(
-      
+      if (isTRUE(input$single_aso_input)) "input_order",
       "oligo_seq",
       "name",
       "length",
@@ -1211,11 +1324,12 @@ function(input, output, session) {
       dplyr::select(dplyr::any_of(column_order), dplyr::everything())
     
     column_names <- c(
+      input_order            = "Input order",
       oligo_seq              = "ASO sequence",
       name                   = "Target (DNA)",
-      length                 = "Length (nt)",
-      start                  = "Start",
-      end                    = "End",
+      length                 = "ASO length (nt)",
+      start                  = "Start position in gene",
+      end                    = "End position in gene",
       gc_content             = "GC content (%)",
       tox_score              = "Acute neurotox score",
       off_target_score       = "Off-target score",
@@ -1234,8 +1348,8 @@ function(input, output, session) {
       PM_tot_freq            = "PM total freq.",
       PM_max_freq            = "PM max freq.",
       PM_count               = "PM count",
-      gene_hits_pm           = "Perfect matches (Peterson)",
-      gene_hits_1mm          = "Off-targets 1 mismatch (Peterson)",
+      gene_hits_pm           = "Perfect matches (Pedersen)",
+      gene_hits_1mm          = "Off-targets 1 mismatch (Pedersen)",
       NoRepeats              = "Number of repeats",
       accessibility          = "Accessibility"
     )
@@ -1246,9 +1360,10 @@ function(input, output, session) {
       )
 
     main_cols <- c(
+      if (isTRUE(input$single_aso_input)) "Input order",
       "ASO sequence",
       "Target (DNA)",
-      "Length (nt)",
+      "ASO length (nt)",
       "Start",
       "End",
       "GC content (%)",
@@ -1262,10 +1377,13 @@ function(input, output, session) {
     main_cols <- intersect(main_cols, names(df))  
     main_idx  <- match(main_cols, names(df))
     extra_idx <- setdiff(seq_along(df), main_idx)
-    
+
     order_option <- list()
-    if ("Off-target score" %in% names(df)) {
-      ws_col <- which(names(df) == "Off-target score") - 1  
+    if (isTRUE(input$single_aso_input) && "Input order" %in% names(df)) {
+      ord_col <- which(names(df) == "Input order") - 1
+      order_option <- list(list(ord_col, "asc"))
+    } else if ("Off-target score" %in% names(df)) {
+      ws_col <- which(names(df) == "Off-target score") - 1
       order_option <- list(list(ws_col, "asc"))
     }
     
@@ -1303,17 +1421,18 @@ function(input, output, session) {
   cached_results <- reactiveVal(list())
   
   # This warning output is displayed when no results are obtained from GGGenome.
-  output$gggenome_status <- renderUI({
-    if (is.null(summary_server)) {
-      div(
-        style = "color:red; font-size:16px; font-weight:bold; margin-bottom:10px;",
-        "GGGenome is currently unavailable. Off-target features are disabled."
-      )
-    } else {
-      NULL
-    }
-  })
-  
+  #####&*##############
+  # output$gggenome_status <- renderUI({
+  #   if (is.null(summary_server)) {
+  #     div(
+  #       style = "color:red; font-size:16px; font-weight:bold; margin-bottom:10px;",
+  #       "GGGenome is currently unavailable. Off-target features are disabled."
+  #     )
+  #   } else {
+  #     NULL
+  #   }
+  # })
+  #######&*#################
   
   # This function only runs when the application is running on Linux. 
   # It calculates the accessibility of off-targets with a distance of less than 2.
@@ -1479,7 +1598,7 @@ function(input, output, session) {
       mismatches              = "Mismatches",
       deletions               = "Deletions",
       insertions              = "Insertions",
-      distance                = "Edit distance",
+      distance                = "Number of Mismatches/Indels",
       offtarget_accessibility = "Accessibility (off-target)",
       oe_lof                  = "GnomAD oe_lof"
     )
@@ -1492,8 +1611,8 @@ function(input, output, session) {
     names(df_view) <- make.unique(nm2, sep = " (dup) ")
     
     # ordering: find the (possibly renamed) distance column
-    dist_idx <- which(names(df_view) == "Edit distance")
-    if (length(dist_idx) == 0) dist_idx <- which(grepl("^Edit distance", names(df_view)))[1]
+    dist_idx <- which(names(df_view) == "Number of Mismatches/Indels")
+    if (length(dist_idx) == 0) dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
     distance_col <- dist_idx - 1  # DT uses 0-based
     
     DT::datatable(
@@ -1817,8 +1936,8 @@ function(input, output, session) {
         
         rnaseh_data <- rnaseh_results(
           selected_row_name = row_data$name,
-          mod_5prime = 0,
-          mod_3prime = 0
+          mod_5prime = 5,
+          mod_3prime = 5
         )
         rnaseh_stored(rnaseh_data)
         
