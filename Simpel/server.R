@@ -193,8 +193,10 @@ function(input, output, session) {
   
   ############### ensembl autocomplete #############
   # ---- Ensembl autocomplete: build dropdown choices once at startup ----
+  # Gene symbols are loaded from a precomputed local .rds file instead of
+  # querying Ensembl live at startup. This avoids missing symbols in the
+  # containerized user-facing Podman deployment.
   
-  # Load TxDb just for gene list (lighter than full analysis pipeline)
   txdb_for_choices <- tryCatch({
     loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
   }, error = function(e) {
@@ -204,50 +206,36 @@ function(input, output, session) {
   
   gdb_for_choices <- genes(txdb_for_choices)
   
-  # Keep same chromosomes as analysis pipeline
   chr_to_keep <- c(as.character(1:22), "X", "Y", "MT")
   gdb_for_choices <- gdb_for_choices[seqnames(gdb_for_choices) %in% chr_to_keep]
   
   ens_ids <- names(gdb_for_choices)
   
-  # ---- Option 2: get gene symbols via biomaRt (no org.Hs.eg.db needed) ----
-  message("Building Ensembl → gene symbol mapping via biomaRt ...")
+  gene_map_file <- if (file.exists("/srv/shiny-server/ERASOR/gene_symbol_map.rds")) {
+    "/srv/shiny-server/ERASOR/gene_symbol_map.rds"
+  } else if (file.exists("/opt/ERASOR/gene_symbol_map.rds")) {
+    "/opt/ERASOR/gene_symbol_map.rds"
+  } else if (file.exists("../gene_symbol_map.rds")) {
+    "../gene_symbol_map.rds"
+  } else if (file.exists("gene_symbol_map.rds")) {
+    "gene_symbol_map.rds"
+  } else {
+    NULL
+  }
   
   gene_symbols <- rep(NA_character_, length(ens_ids))
   
-  # Try to contact Ensembl. If it fails, we silently fall back to Ensembl-only.
-  bm_ok <- FALSE
-  try({
-    mart <- biomaRt::useEnsembl(
-      biomart = "ENSEMBL_MART_ENSEMBL",
-      dataset = "hsapiens_gene_ensembl",
-      host    = "https://www.ensembl.org"
-    )
+  if (!is.null(gene_map_file)) {
+    bm_map <- readRDS(gene_map_file)
+    bm_map <- as.data.frame(bm_map, stringsAsFactors = FALSE)
+    bm_map <- bm_map[!duplicated(bm_map$ensembl_gene_id), , drop = FALSE]
     
-    # Get mapping for all Ensembl gene IDs present in our TxDb
-    bm_map <- biomaRt::getBM(
-      attributes = c("ensembl_gene_id", "hgnc_symbol"),
-      filters    = "ensembl_gene_id",
-      values     = ens_ids,
-      mart       = mart
-    )
-    
-    # Make sure we only keep unique mapping per Ensembl ID
-    bm_map <- bm_map[!duplicated(bm_map$ensembl_gene_id), ]
-    
-    # Match back to our ens_ids order
     idx <- match(ens_ids, bm_map$ensembl_gene_id)
     gene_symbols <- bm_map$hgnc_symbol[idx]
-    
-    bm_ok <- TRUE
-  }, silent = TRUE)
-  
-  if (!bm_ok) {
-    message("WARNING: biomaRt mapping failed; falling back to Ensembl IDs only.")
-    gene_symbols <- rep(NA_character_, length(ens_ids))
+  } else {
+    message("WARNING: gene_symbol_map.rds not found; falling back to Ensembl IDs only.")
   }
   
-  # Build label/choice table
   gene_map <- data.frame(
     ensembl = ens_ids,
     symbol  = gene_symbols,
@@ -256,23 +244,31 @@ function(input, output, session) {
   
   gene_map$label <- ifelse(
     is.na(gene_map$symbol) | gene_map$symbol == "",
-    gene_map$ensembl,  # fallback: just show Ensembl ID
+    gene_map$ensembl,
     paste0(gene_map$symbol, " (", gene_map$ensembl, ")")
   )
   
-  # What Shiny will see in the dropdown:
-  # - names(gene_choices)  = labels (e.g. "HRAS (ENSG... )")
-  # - values(gene_choices) = Ensembl IDs used by the pipeline
-  gene_choices <- setNames(gene_map$ensembl, gene_map$label)
+  gene_choices_df <- data.frame(
+    label   = gene_map$label,
+    value   = gene_map$ensembl,
+    symbol  = ifelse(is.na(gene_map$symbol), "", gene_map$symbol),
+    ensembl = gene_map$ensembl,
+    stringsAsFactors = FALSE
+  )
   
-
   observe({
     updateSelectizeInput(
       session,
       inputId  = "ensemble_id_input",
-      choices  = gene_choices,
-      selected = "ENSG00000174775", # sets HRAS as default
-      server   = TRUE
+      choices  = gene_choices_df,
+      selected = "ENSG00000174775",
+      server   = TRUE,
+      options  = list(
+        valueField  = "value",
+        labelField  = "label",
+        searchField = c("label", "symbol", "ensembl"),
+        placeholder = "Type gene symbol or Ensembl ID"
+      )
     )
   })
   
@@ -2112,5 +2108,43 @@ function(input, output, session) {
   )
   })
 }
+
+# this code is run a single time, it does not need to be repeated
+# it loads the biomart db for gene symbols once, it is then also imported with the docker
+# podman struggles in the user version to connect to ensembl for the gene symbols so i rather have it access to it immediately
+##################################################################
+# library(GenomicFeatures)
+# library(GenomeInfoDb)
+# library(biomaRt)
+# 
+# txdb <- loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+# 
+# gdb <- genes(txdb)
+# 
+# chr_to_keep <- c(as.character(1:22), "X", "Y", "MT")
+# gdb <- gdb[seqnames(gdb) %in% chr_to_keep]
+# 
+# ens_ids <- names(gdb)
+# 
+# mart <- biomaRt::useEnsembl(
+#   biomart = "ENSEMBL_MART_ENSEMBL",
+#   dataset = "hsapiens_gene_ensembl",
+#   host    = "https://www.ensembl.org"
+# )
+# 
+# bm_map <- biomaRt::getBM(
+#   attributes = c("ensembl_gene_id", "hgnc_symbol"),
+#   filters    = "ensembl_gene_id",
+#   values     = ens_ids,
+#   mart       = mart
+# )
+# 
+# bm_map <- bm_map[!duplicated(bm_map$ensembl_gene_id), , drop = FALSE]
+# 
+# saveRDS(bm_map, "gene_symbol_map.rds")
+##################################################################
+
+
+
 
 
