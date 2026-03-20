@@ -119,7 +119,7 @@ RUN R -e "\
 
 # Make RStudio start in the project directory automatically (rstudio login mode)
 ##############################################
-RUN echo 'setwd("/srv/shiny-server/ASOstool-v2")' >> /home/rstudio/.Rprofile && \
+RUN echo 'setwd("/srv/shiny-server/ERASOR")' >> /home/rstudio/.Rprofile && \
     chown rstudio:rstudio /home/rstudio/.Rprofile
 
 # Expose ports
