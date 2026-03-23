@@ -183,7 +183,7 @@ function(input, output, session) {
       )
     } else {
       showNotification(
-        "GGGenome is currently unavailable.",
+        "GGGenome is currently unavailable. Running the script might lead to a crash/disconnect.",
         type = "error",
         duration = NULL
       )
@@ -271,7 +271,7 @@ function(input, output, session) {
       )
     } else {
       showNotification(
-        "BioMart is currently unavailable for one or more required queries.",
+        "BioMart is currently unavailable. Running the script might lead to a crash/disconnect.",
         type = "error",
         duration = NULL
       )
