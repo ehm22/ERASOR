@@ -64,7 +64,7 @@ podman run -d \
 On Windows (Powershell): (currently not tested, for Windows users we recommend installing a WSL environment such as Ubuntu)
 ```
 podman run -d `
-  --name erasor-app2 `
+  --name erasor-app `
   -p 3838:3838 `
   erasor
 ```
