@@ -100,6 +100,12 @@ Remove it:
 ```
 podman rm <container_id>
 ```
+
+If you want to stop and remove all containers: 
+```
+podman stop -a && podman rm -a
+```
+
 ***
 ### 💻 Developer setup (RStudio + Git + SSH)
 
