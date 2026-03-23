@@ -80,8 +80,9 @@ You're done!
 #### 5. Stop the container
 
 Stop the container after you're done to free up ports.
-Also stop the previpous container before launching a new one.
+Also stop the previous container before launching a new one.
 Please be aware that in the case of an unexpected crash or disconnect, you should also stop and remove the previous container.
+
 List running containers:
 
 ```
