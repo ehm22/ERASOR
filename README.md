@@ -30,7 +30,7 @@ Erasmus ASO designer (ERASOR) is an Antisense oligo sequence design tool for RNa
 ## Setup guide
 ### 👥 Regular user setup (Shiny server only)
 
-This section is for end-users who only need to run the Shiny application. No RStudio or Git setup is required. 
+This section is for end-users who only need to run the Shiny application. No RStudio or Git setup is required. This setup uses podman to install, please install podman before proceeding. https://podman.io/ 
 
 #### 1. Clone git repo
 Clone this git repository and navigate to the application folder.
