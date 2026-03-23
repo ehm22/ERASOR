@@ -2,6 +2,10 @@
 
 ## Table of contents
 - [🧬 Introduction](#introduction)
+- [Setup guide](#setup-guide)
+  - [👥 Regular user setup (Shiny server only)](#-regular-user-setup-shiny-server-only)
+  - [💻 Developer setup (RStudio + Git + SSH)](#-developer-setup-rstudio--git--ssh)
+  - [✔ Setup Summary Table](#-setup-summary-table)
 - [🎯 Quick start guide](#quick-start-guide)
 - [📋 Features](#features)
   - [⚙️ Settings & Filters](#️-settings--filters)
@@ -16,125 +20,12 @@
     - [Main page](#main-page)
     - [RNaseH page](#rnaseh-page)
     - [Off-targets page](#off-targets-page)
-- [Setup guide](#setup-guide)
-  - [👥 Regular user setup (Shiny server only)](#-regular-user-setup-shiny-server-only)
-  - [💻 Developer setup (RStudio + Git + SSH)](#-developer-setup-rstudio--git--ssh)
-  - [✔ Setup Summary Table](#-setup-summary-table)
 - [📦 Dependencies](#-dependencies)
 
 
 ## 🧬 Introduction
 Erasmus ASO designer (ERASOR) is an Antisense oligo sequence design tool for RNase H1 mediated mRNA degradation. The effectiveness of an ASO to silence a given gene is predicated on many different variables. ERASOR gives insight into what ASOs will and will not be worth testing in the lab. In silico prediction is much easier and faster than lab work. With this in mind, ERASOR is meant to be used as a first step in an ASO drug development pipeline.
 
-
-## 🎯 Quick start guide
-To get started quickly and get results after starting the shiny server follow these steps:
-
-1. To start enter the **ensemble ID** for the gene you want to target. 
-2. Tick or untick the checkboxes to change the output.
-    - Polymorphism analysis
-    - Conserved & Orthology
-    - Running on Linux-OS
-3. Select your desired **Oligo length** range
-4. Enter your values for **filtering**
-5. Press **"Run"** to start the application
-
-The runtime of ERASOR may be 10-60 minutes. Runtime is heavily dependent on the selected oligo length and gene size and can take longer than 60 minutes if unfavorable settings are selected. 
-
-## 📋 Features
-
-### ⚙️ Settings & Filters
-
-#### Gene Selection
-
-**Ensembl Gene ID**  
-Enter a valid Ensembl Gene ID (`ENSG…`) corresponding to the gene of interest.
-
----
-
-#### Analysis Features
-
-**Polymorphism Analysis**  
-Identifies single nucleotide polymorphisms (SNPs) associated with the selected Ensembl gene. SNPs are genetic variations where one nucleotide is substituted for another (e.g., C → T).
-
-**Conservation & Orthology**  
-Compares the selected Ensembl gene with the mouse genome to identify conserved regions and orthologous genes. Due to the strong genetic similarity between humans and mice, this analysis helps assess whether the gene can be studied *in vivo* using mouse models.
-
----
-
-#### System Requirements
-
-**Running on Linux OS**  
-Enable this option only when running the program on a Linux operating system. Certain features (e.g. ViennaRNA analysis) require Linux and may fail on Windows or macOS if enabled.
-
----
-
-#### Sequence Parameters
-
-**Oligo Length**  
-Specifies the length or range of target mRNA sequences and complementary ASO sequences.  
-- Larger lengths/ranges → shorter runtime  
-- Smaller lengths/ranges → longer runtime
-
----
-
-#### Quality Control Thresholds
-
-**Amount of Perfect Matches**  
-Defines the number of perfect matches allowed. This value is used as a quality control threshold for target mRNA sequences.
-
-**Amount of Mismatches**  
-Defines the number of mismatches allowed. This value is used as a quality control threshold for target mRNA sequences.
-
-**Accessibility Score**  
-Estimates how accessible the target mRNA sequences are, serving as a quality control metric. Higher accessibility is an important factor in identifying potentially effective ASOs.
-
-**Polymorphism Frequency**  
-Estimates the probability that a polymorphism (SNP) is present in the target mRNA sequence.  
-Lower values are preferred, as they indicate a reduced likelihood of polymorphic variation.
-
-**Toxicity Score**  
-Estimates the potential toxicity of the complementary ASO targeting the mRNA sequence.  
-Higher scores indicate lower toxicity and are therefore preferable.
-
-**Motif Correlation Score**  
-Certain sequence motifs are correlated with ASO effectiveness. Each motif is assigned a weight based on the strength of its correlation, and the total score is calculated by summing these weights.
-
----
-
-#### ASO Modifications
-
-**5′ Modification (5′Mod)**  
-Adds chemical modifications to the 5′ end of the ASO sequence, affecting accessible binding sites on the target mRNA. An overlap of up to **2 modified nucleotides** on the 3′ end of the target mRNA is allowed.
-
-**3′ Modification (3′Mod)**  
-Adds chemical modifications to the 3′ end of the ASO sequence, affecting accessible binding sites on the target mRNA. An overlap of up to **4 modified nucleotides** on the 5′ end of the target mRNA is allowed.
-
----
-
-#### Off-Target Analysis
-
-**Off-Target Mismatches**  
-Identifies off-target sequences based on the number of mismatches allowed in the target mRNA.  
-  - Default: **1 mismatch**  
-  - Allowing more mismatches increases off-target detection but also increases processing time.
-
-***
-### ️Page overview
-
-#### Main page:  
-
-This is the main page of the application, which displays the primary output table. The table lists all potential target mRNA sequences for the provided Ensembl ID and includes information to help the user select suitable ASO targets. After selecting an ASO, the application automatically redirects to the RNase H tab, and the chosen ASO becomes available for further analysis on all other tabs. 
-
-#### RNaseH page:  
-
-This page predicts the optimal binding site for RNase H on the chosen target mRNA sequence. It uses a matrix of dinucleotide values and a sliding window approach to evaluate all possible binding sites along the mRNA sequence. The script accounts for chemical modifications on the ASO’s 5’ and 3’ ends, which can affect possible binding sites. Each potential site is scored based on the average from the dinucleotide matrix, and the results are ranked to highlight the most promising locations for RNase H cleavage. 
-
-#### Off-targets page  
-
-This page displays the off-targets for the selected target mRNA sequence based on the allowed number of mismatches. For the complementary ASO sequence, it shows mismatches, deletions, insertions, protein name and additional information from GGGenome. The protein name is then given to Protein Atlas to retrieve the tissue expression data. This page also calculates the accessibility potential of each off-target.   
-
-OMIM information required an API key given by OMIM. To request an API key, go to [OMIM key request page.](https://www.omim.org/api)
 
 ## Setup guide
 ### 👥 Regular user setup (Shiny server only)
@@ -145,8 +36,8 @@ This section is for end-users who only need to run the Shiny application. No RSt
 Clone this git repository and navigate to the application folder.
 
 ```
-git clone https://github.com/JimReijnhoudt/ASOstool-v2.git
-cd ASOstool-v2
+git clone https://github.com/ehm22/ERASOR.git
+cd ERASOR
 ```
 Optional: Add OMIM key to OMIM_key file (see request information above):
 ```
@@ -156,7 +47,7 @@ echo EXAMPLE_OMIM_KEY > OMIM_key
 #### 2. Build the Docker image 
 
 ```
-docker build -t asostoolv2 .
+podman build -t erasor .
 ```
 
 #### 3. Start the container
@@ -164,25 +55,25 @@ docker build -t asostoolv2 .
 
 On Linux/Mac:
 ```         
-docker run -d \
-    -p 3838:3838 \
-    -v $(pwd):/srv/shiny-server/ASOstool-v2 \
-    asostoolv2
+podman run -d \
+  --name erasor-app \
+  -p 3838:3838 \
+  erasor
 ```
 
-On Windows (Powershell):
+On Windows (Powershell): (currently not tested, for Windows users we recommend installing a WSL environment such as Ubuntu)
 ```
-docker run -d `
+podman run -d `
+  --name erasor-app2 `
   -p 3838:3838 `
-  -v ${PWD}:/srv/shiny-server/ASOstool-v2 `
-  asostoolv2
+  erasor
 ```
 
 #### 4. Open the Shiny App
 
 Open:
 
-👉 <http://localhost:3838/ASOstool-v2/Simpel/> 
+👉 <http://localhost:3838/ERASOR/Simpel/> 
 
 You're done!
 
@@ -192,19 +83,19 @@ Stop the container after you're done to free up ports.
 List running containers:
 
 ```
-docker ps
+podman ps
 ```
 
 Stop it:
 
 ```
-docker stop <container_id>
+podman stop <container_id>
 ```
 
 Remove it (optional):
 
 ```
-docker rm <container_id>
+podman rm <container_id>
 ```
 ***
 ### 💻 Developer setup (RStudio + Git + SSH)
@@ -382,6 +273,115 @@ docker rm <container_id>
 | Start ssh-agent + ssh-add (If using password for SSH key)   | ❌             | ✔                     |
 | Run docker container                                        | ❌             | ✔                     |
 | Stop container                                              | ❌             | ✔                     |
+
+## 🎯 Quick start guide
+To get started quickly and get results after starting the shiny server follow these steps:
+
+1. To start enter the **ensemble ID** for the gene you want to target. 
+2. Tick or untick the checkboxes to change the output.
+    - Polymorphism analysis
+    - Conserved & Orthology
+    - Running on Linux-OS
+3. Select your desired **Oligo length** range
+4. Enter your values for **filtering**
+5. Press **"Run"** to start the application
+
+The runtime of ERASOR may be 10-60 minutes. Runtime is heavily dependent on the selected oligo length and gene size and can take longer than 60 minutes if unfavorable settings are selected. 
+
+## 📋 Features
+
+### ⚙️ Settings & Filters
+
+#### Gene Selection
+
+**Ensembl Gene ID**  
+Enter a valid Ensembl Gene ID (`ENSG…`) corresponding to the gene of interest.
+
+---
+
+#### Analysis Features
+
+**Polymorphism Analysis**  
+Identifies single nucleotide polymorphisms (SNPs) associated with the selected Ensembl gene. SNPs are genetic variations where one nucleotide is substituted for another (e.g., C → T).
+
+**Conservation & Orthology**  
+Compares the selected Ensembl gene with the mouse genome to identify conserved regions and orthologous genes. Due to the strong genetic similarity between humans and mice, this analysis helps assess whether the gene can be studied *in vivo* using mouse models.
+
+---
+
+#### System Requirements
+
+**Running on Linux OS**  
+Enable this option only when running the program on a Linux operating system. Certain features (e.g. ViennaRNA analysis) require Linux and may fail on Windows or macOS if enabled.
+
+---
+
+#### Sequence Parameters
+
+**Oligo Length**  
+Specifies the length or range of target mRNA sequences and complementary ASO sequences.  
+- Larger lengths/ranges → shorter runtime  
+- Smaller lengths/ranges → longer runtime
+
+---
+
+#### Quality Control Thresholds
+
+**Amount of Perfect Matches**  
+Defines the number of perfect matches allowed. This value is used as a quality control threshold for target mRNA sequences.
+
+**Amount of Mismatches**  
+Defines the number of mismatches allowed. This value is used as a quality control threshold for target mRNA sequences.
+
+**Accessibility Score**  
+Estimates how accessible the target mRNA sequences are, serving as a quality control metric. Higher accessibility is an important factor in identifying potentially effective ASOs.
+
+**Polymorphism Frequency**  
+Estimates the probability that a polymorphism (SNP) is present in the target mRNA sequence.  
+Lower values are preferred, as they indicate a reduced likelihood of polymorphic variation.
+
+**Toxicity Score**  
+Estimates the potential toxicity of the complementary ASO targeting the mRNA sequence.  
+Higher scores indicate lower toxicity and are therefore preferable.
+
+**Motif Correlation Score**  
+Certain sequence motifs are correlated with ASO effectiveness. Each motif is assigned a weight based on the strength of its correlation, and the total score is calculated by summing these weights.
+
+---
+
+#### ASO Modifications
+
+**5′ Modification (5′Mod)**  
+Adds chemical modifications to the 5′ end of the ASO sequence, affecting accessible binding sites on the target mRNA. An overlap of up to **2 modified nucleotides** on the 3′ end of the target mRNA is allowed.
+
+**3′ Modification (3′Mod)**  
+Adds chemical modifications to the 3′ end of the ASO sequence, affecting accessible binding sites on the target mRNA. An overlap of up to **4 modified nucleotides** on the 5′ end of the target mRNA is allowed.
+
+---
+
+#### Off-Target Analysis
+
+**Off-Target Mismatches**  
+Identifies off-target sequences based on the number of mismatches allowed in the target mRNA.  
+  - Default: **1 mismatch**  
+  - Allowing more mismatches increases off-target detection but also increases processing time.
+
+***
+### ️Page overview
+
+#### Main page:  
+
+This is the main page of the application, which displays the primary output table. The table lists all potential target mRNA sequences for the provided Ensembl ID and includes information to help the user select suitable ASO targets. After selecting an ASO, the application automatically redirects to the RNase H tab, and the chosen ASO becomes available for further analysis on all other tabs. 
+
+#### RNaseH page:  
+
+This page predicts the optimal binding site for RNase H on the chosen target mRNA sequence. It uses a matrix of dinucleotide values and a sliding window approach to evaluate all possible binding sites along the mRNA sequence. The script accounts for chemical modifications on the ASO’s 5’ and 3’ ends, which can affect possible binding sites. Each potential site is scored based on the average from the dinucleotide matrix, and the results are ranked to highlight the most promising locations for RNase H cleavage. 
+
+#### Off-targets page  
+
+This page displays the off-targets for the selected target mRNA sequence based on the allowed number of mismatches. For the complementary ASO sequence, it shows mismatches, deletions, insertions, protein name and additional information from GGGenome. The protein name is then given to Protein Atlas to retrieve the tissue expression data. This page also calculates the accessibility potential of each off-target.   
+
+OMIM information required an API key given by OMIM. To request an API key, go to [OMIM key request page.](https://www.omim.org/api)
 
 ## 📦 Dependencies
 | Component                                   | Version                | Source / Notes                                                                 |
