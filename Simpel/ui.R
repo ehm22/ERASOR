@@ -455,7 +455,7 @@ ui <- fluidPage(
             ####
             fluidRow(
               column(4, actionButton("run_button", "Run")),
-              column(4, actionButton("cancel_run", "Cancel run", class = "btn-danger", style = "margin-left: -10px;")),
+              # column(4, actionButton("cancel_run", "Cancel run", class = "btn-danger", style = "margin-left: -10px;")),
               column(4, actionButton("reset_defaults", "Set to default"))
             )),
           )

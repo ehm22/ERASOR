@@ -191,6 +191,93 @@ function(input, output, session) {
     
   }, once = TRUE)
   
+  
+  # ----------------------------- BioMart startup check -----------------------
+  
+  options(timeout = 8)
+  
+  check_biomart <- function() {
+    tryCatch({
+      martHS <- biomaRt::useEnsembl(
+        biomart = "ENSEMBL_MART_ENSEMBL",
+        dataset = "hsapiens_gene_ensembl",
+        host    = "https://www.ensembl.org"
+      )
+      
+      martMM <- biomaRt::useEnsembl(
+        biomart = "ENSEMBL_MART_ENSEMBL",
+        dataset = "mmusculus_gene_ensembl",
+        host    = "https://www.ensembl.org"
+      )
+      
+      # 1) human -> mouse ortholog query
+      ortho <- biomaRt::getBM(
+        attributes = "mmusculus_homolog_ensembl_gene",
+        filters    = "ensembl_gene_id",
+        values     = "ENSG00000139618",
+        mart       = martHS,
+        bmHeader   = FALSE
+      )
+      
+      mm_id <- ortho$mmusculus_homolog_ensembl_gene
+      mm_id <- mm_id[!is.na(mm_id) & nzchar(mm_id)]
+      if (length(mm_id) == 0) return(FALSE)
+      
+      # 2) mouse sequence query
+      mm_seq <- biomaRt::getBM(
+        attributes = c("gene_exon_intron", "ensembl_gene_id"),
+        filters    = "ensembl_gene_id",
+        values     = mm_id[1],
+        mart       = martMM
+      )
+      
+      if (!is.data.frame(mm_seq) ||
+          nrow(mm_seq) == 0 ||
+          !"gene_exon_intron" %in% names(mm_seq)) {
+        return(FALSE)
+      }
+      
+      # 3) polymorphism query
+      pm <- biomaRt::getBM(
+        attributes = c("minor_allele_freq", "chromosome_start"),
+        filters    = "ensembl_gene_id",
+        values     = "ENSG00000139618",
+        mart       = martHS
+      )
+      
+      if (!is.data.frame(pm) ||
+          !all(c("minor_allele_freq", "chromosome_start") %in% names(pm))) {
+        return(FALSE)
+      }
+      
+      TRUE
+    }, error = function(e) {
+      message("BioMart startup check failed: ", e$message)
+      FALSE
+    })
+  }
+  
+  biomart_available <- reactiveVal(NULL)
+  
+  observeEvent(TRUE, {
+    available <- check_biomart()
+    biomart_available(available)
+    
+    if (isTRUE(available)) {
+      showNotification(
+        "BioMart is available.",
+        type = "message",
+        duration = NULL
+      )
+    } else {
+      showNotification(
+        "BioMart is currently unavailable for one or more required queries.",
+        type = "error",
+        duration = NULL
+      )
+    }
+  }, once = TRUE)
+  
   ############### ensembl autocomplete #############
   # ---- Ensembl autocomplete: build dropdown choices once at startup ----
   # Gene symbols are loaded from a precomputed local .rds file instead of
