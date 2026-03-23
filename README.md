@@ -61,7 +61,7 @@ podman run -d \
   erasor
 ```
 
-On Windows (Powershell): (currently not tested, for Windows users we recommend installing a WSL environment such as Ubuntu)
+On Windows (Powershell): 
 ```
 podman run -d `
   --name erasor-app `
@@ -103,7 +103,8 @@ podman rm <container_id>
 
 If you want to stop and remove all containers: 
 ```
-podman stop -a && podman rm -a
+podman stop -a
+podman rm -a
 ```
 
 ***
