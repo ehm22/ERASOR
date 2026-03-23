@@ -150,15 +150,6 @@ rangeFilterServer <- function(id, min_allowed, max_allowed,
 function(input, output, session) {
 
   # ----------------------------------- Notifications UI -----------------------
-  
-  # startup notification 
-  loading_note <- showNotification(
-    "Please wait. Loading...",
-    type = "message",
-    duration = NULL,
-    closeButton = FALSE
-  )
-  
   # ----------------------------- GGGenome startup check -----------------------
   check_gggenome <- function() {
     tryCatch({
@@ -360,7 +351,7 @@ function(input, output, session) {
   })
   
   session$onFlushed(function() {
-    removeNotification(loading_note)
+    shinyjs::hide("app_startup_loading")
     
     showNotification(
       "Finished loading",

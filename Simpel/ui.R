@@ -63,10 +63,41 @@ rangeFilterUI <- function(
 
 ui <- fluidPage(
   useShinyjs(),
+  div(
+    id = "app_startup_loading",
+    div(
+      id = "app_startup_loading_box",
+      span("Please wait. Loading"),
+      span(id = "loading_dots", ".")
+    )
+  ),
   theme = shinythemes::shinytheme("flatly"),
   tags$head(tags$style(
     HTML(
+      
             "
+      #app_startup_loading {
+        position: fixed;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.35);
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      
+      #app_startup_loading_box {
+        min-width: 320px;
+        max-width: 500px;
+        padding: 15px 20px;
+        background: #d9edf7;
+        border: 1px solid #bce8f1;
+        border-radius: 4px;
+        color: #31708f;
+        font-size: 18px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        text-align: center;
+      }
       #shiny-notification-panel {
         position: fixed;
         top: calc(50%);
@@ -627,8 +658,24 @@ ui <- fluidPage(
     width = 9
   )
   ),
+  tags$script(HTML("
+  var loadingDotsInterval = setInterval(function() {
+    var el = document.getElementById('loading_dots');
+    if (!el) return;
+
+    if (el.textContent === '.') {
+      el.textContent = '..';
+    } else if (el.textContent === '..') {
+      el.textContent = '...';
+    } else {
+      el.textContent = '.';
+    }
+  }, 500);
+")),
+  
   tags$script(
-    HTML('$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });'))
+    HTML('$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });')
+  )
 )
 
 
