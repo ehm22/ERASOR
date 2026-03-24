@@ -653,7 +653,82 @@ ui <- fluidPage(
         hr(),
         downloadButton("download_offtarget", "Download results", style = "margin-bottom: 15px;"),
         DTOutput("offtarget_results"),
-      )
+      ),
+      # tabPanel(
+      #   "Patient-specific design",
+      #   div(
+      #     "This page designs ASOs for a patient-specific genomic region. The app takes the first SNV and last SNV within the selected gene, adds a flanking region on both sides, applies the patient variants to the reference sequence, and generates ASOs only across that personalized window.",
+      #     style = "margin-top: 20px; font-size: 18px;"
+      #   ),
+      #   hr(),
+      #   
+      #   fluidRow(
+      #     column(
+      #       4,
+      #       wellPanel(
+      #         h4("Patient input"),
+      #         
+      #         selectizeInput(
+      #           "ensemble_id_input_patient",
+      #           label = "Enter Gene or Ensembl ID (ENSG…):",
+      #           choices = NULL,
+      #           multiple = FALSE,
+      #           options = list(
+      #             placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
+      #             maxOptions = 50,
+      #             create = TRUE
+      #           )
+      #         ),
+      #         
+      #         fileInput(
+      #           "patient_variant_file",
+      #           "Upload patient SNV CSV",
+      #           accept = c(".csv")
+      #         ),
+      #         
+      #         tags$small("Required columns: chr, pos, ref, alt"),
+      #         br(), br(),
+      #         
+      #         numericInput(
+      #           "patient_flank",
+      #           "Flanking nucleotides before first and after last SNV",
+      #           value = 50,
+      #           min = 0,
+      #           max = 1000,
+      #           step = 1
+      #         ),
+      #         
+      #         sliderInput(
+      #           "patient_oligo_length_range",
+      #           "ASO length",
+      #           min = 15,
+      #           max = 25,
+      #           value = c(18, 20)
+      #         ),
+      #         
+      #         checkboxInput(
+      #           "patient_linux_input",
+      #           "Accessibility calculation (Linux-OS only)",
+      #           value = TRUE
+      #         ),
+      #         
+      #         actionButton("run_patient_button", "Run patient analysis"),
+      #         br(), br(),
+      #         
+      #         downloadButton("download_patient_filtered", "Download patient results")
+      #       )
+      #     ),
+      #     
+      #     column(
+      #       8,
+      #       h4("Patient window summary"),
+      #       tableOutput("patient_summary"),
+      #       hr(),
+      #       h4("Patient-specific ASO results"),
+      #       DTOutput("patient_results")
+      #     )
+      #   )
+      # )
     ),
     width = 9
   )

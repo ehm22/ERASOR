@@ -24,7 +24,11 @@ source("../tools/Off_target_tissue.R")
 source("../tools/Off_target_OMIM_Api.R")
 source("../tools/Off_target_accessibility.R")
 
-plan(multicore, workers = 12)
+if (.Platform$OS.type == "windows") {
+  plan(multisession, workers = 8)
+} else {
+  plan(multicore, workers = 8)
+}
 options(future.globals.maxSize = 6 * 1024^3)
 
 # Helper function to track time of the run---------------------------------------
@@ -148,7 +152,7 @@ rangeFilterServer <- function(id, min_allowed, max_allowed,
 ################################################################################
 
 function(input, output, session) {
-
+  
   # ----------------------------------- Notifications UI -----------------------
   # ----------------------------- GGGenome startup check -----------------------
   check_gggenome <- function() {
@@ -170,7 +174,7 @@ function(input, output, session) {
       showNotification(
         "GGGenome is available.",
         type = "message",
-        duration = NULL
+        duration = 20
       )
     } else {
       showNotification(
@@ -185,7 +189,7 @@ function(input, output, session) {
   
   # ----------------------------- BioMart startup check -----------------------
   
-  options(timeout = 8)
+  options(timeout = 20)
   
   check_biomart <- function() {
     tryCatch({
@@ -258,7 +262,7 @@ function(input, output, session) {
       showNotification(
         "BioMart is available.",
         type = "message",
-        duration = NULL
+        duration = 8
       )
     } else {
       showNotification(
@@ -443,20 +447,20 @@ function(input, output, session) {
   acc_range <- rangeFilterServer("accessibility",0, 1,   fixed = "none")
   perf_range <- rangeFilterServer("perfect_hits", 0, 200, fixed = "left")
   mm_range   <- rangeFilterServer("mismatch_hits",0, 500, fixed = "left")
-
- # starts timer, shows that the scirpt started and is loadin gthe progress bar
+  
+  # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
   observeEvent(input$run_button, {
     if (isTRUE(input$single_aso_input) && length(parsed_asos()) == 0) {
-    showNotification(
-      "No valid ASO sequences detected. Please enter sequences containing only A, C, G, and T.",
-      type = "error",
-      duration = 8
-    )
-    return(NULL)
-  }
+      showNotification(
+        "No valid ASO sequences detected. Please enter sequences containing only A, C, G, and T.",
+        type = "error",
+        duration = 8
+      )
+      return(NULL)
+    }
     start_time <- Sys.time()
- 
+    
     showNotification(
       "Script started",
       type = "default",
@@ -465,1137 +469,818 @@ function(input, output, session) {
     )
     
     
-  withProgress(message = "Running analysis...", value = 0, {
-     run_step <- function(label, amount, expr) {
-      incProgress(0, detail = paste0(label, "..."))
-       on.exit(
-        incProgress(amount, detail = paste0(label)),
-        add = TRUE
-      )
-       force(expr)
-    }
-  
-  # ----------------------------------- Functions ------------------------------
-  # Make the tox score function
-  
-  calculate_acute_neurotox <- function(xx) {
-    # make sure input is in character format
-    xx <- as.character(xx)
-    
-    # count the number of each nucleotide
-    lf <- function(x) {
-      x <- tolower(x)
-      x <- strsplit(x, "")[[1]]
-      x <- table(factor(x, levels = c("a", "c", "t", "g")))
-      return(x)
-    }
-    cnt_nt <- as.data.frame(t(sapply(xx, lf)))
-    # count number of nucleotides from the 3'-end untill it finds the first g
-    gfree3 <- function(x) {
-      x <- tolower(x)
-      x <- strsplit(x, "")[[1]]
-      tfg <- x == "g"
-      if (sum(tfg) == 0) {
-        l3 <- NA
-      } else {
-        posg <- c(1:length(x))[tfg]
-        l3 <- length(x) - max(posg)
-      }
-      return(l3)
-    }
-    cnt_gfree3 <- sapply(xx, gfree3)
-    cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
-    cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
-    ## Calculate final score based on trained parameters and return result
-    calc_out <- round(
-      136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
-        4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
-        cnt_gfree3,
-      1
-    )
-    
-    return(as.numeric(calc_out))
-  }
-  
-    
-  if (input$linux_input == TRUE) {
-    # 2.5.1 Predict accessibility for an RNA target
-    RNAplfold_R = function(seq.char,
-                           L.in = 40,
-                           W.in = 80,
-                           u.in = 16) {
-      cmmnd2 = paste("RNAplfold -L", L.in, "-W", W.in, "-u", u.in)
-      seq.char = as.character(seq.char)
-      cat(seq.char, file = paste("|", cmmnd2, sep = ""))
-      acc.tx = read.delim(
-        "plfold_lunp",
-        as.is     = TRUE,
-        skip      = 2,
-        header    = FALSE,
-        row.names = 1
-      )
-      acc.tx = acc.tx[, colSums(is.na(acc.tx)) != nrow(acc.tx)]
-      colnames(acc.tx) = 1:ncol(acc.tx)
-      file.remove("plfold_lunp")
-      file.remove("plfold_dp.ps")
-      return(acc.tx)
-    }
-    
-    # 2.5.3 Predict duplex formation and self folding of oligonucleotides
-    RNAduplex_R = function(seqs) {
-      sys_cmd = system('RNAduplex',
-                       input = c(seqs, seqs),
-                       intern = TRUE)
-      as.numeric(regmatches(sys_cmd, regexpr("-?\\d+\\.\\d+", sys_cmd)))
-    }
-    
-    RNAselffold_R = function (seqs) {
-      output = system('RNAfold --noPS',
-                      input = c(seqs),
-                      intern = T)
-      output = unlist(strsplit(output[grepl('[0-9]', output)], '[(]'))
-      as.double(gsub(' |[)]', '', output[grepl('[0-9]', output)]))
-    }
-  }
-  
-  # ----------------------------------- Data setup -----------------------------
-  # Store all human pre-mRNA sequences
-  
-  txdb_hsa <- run_step("Retrieving sequences from Ensembl", 0.05, {
-    tryCatch({
-    loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
-  }, error = function(e) {
-    message("Primary txdb path not found, trying local path...")
-    loadDb("../txdb_hsa_biomart.db")
-  })
-  })
-    
-  # ----------------------------------- milestone 1 ----------------------------
-  print("milestone1: loaded human database object")
-  
-  # Extract the genes
-  gdb_hsa <- genes(txdb_hsa)
-  
-  # Harmonize seqname style between TxDb and BSgenome
-  # (this fixes the 'invalid sequence name: 1' error)
-  seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
-  
-  # Keep only chromosomes present in BOTH objects
-  common_chrs <- intersect(seqlevels(gdb_hsa), seqlevels(Hsapiens))
-  gdb_hsa <- keepSeqlevels(gdb_hsa, common_chrs, pruning.mode = "coarse")
-  
-  # ----------------------------------- milestone 2 ----------------------------
-  print("milestone2: Subsetted genes from specified chromosomes")
-  
-  # Get the sequences *
-  HS <- getSeq(Hsapiens, gdb_hsa)
-  
-  # ----------------------------------- milestone 3 ----------------------------
-  print("milestone3: Saved human gene sequences")
-  # Target collect the pre-mRNA sequence
-  
-  # Define wanted Ensembl ID
-  ensembl_ID = input$ensemble_id_input
-  
-  # Retrieve a specific RNA target using the Ensembl ID
-  RNA_target = HS[names(HS) == ensembl_ID]
-  
-  
-  # ----------------------------------- milestone 4 ----------------------------
-  print("milestone4: Saved input RNA target (ENSEMBL) information: \n")
-  print(RNA_target)
-  #filters on ensembl ID
-  target_ranges = gdb_hsa[names(gdb_hsa) == ensembl_ID]
-
-  
-  # Extracts the chromosome name for target range,extracts the start and end
-  # Position of the genomic region and note from which strand it is.
-  # Positive strand 1 ('+'), negative strand -1 ('-'), or unspecified 0 ('*').
-  chr_coord = c(
-    chr = as.numeric(as.character(seqnames(target_ranges))),
-    start = start(target_ranges),
-    end = end(target_ranges),
-    strand = ifelse(strand(target_ranges) == "+", 1, -1)
-  )
-  
-  # ----------------------------------- milestone 5 ----------------------------
-  print("milestone5: Extracted chromosome coordinates of RNA target")
-    
-  # Set the width of rna_target as value L
-  l = width(RNA_target)
-  
-  # Note length of subsequence
-  oligo_lengths = input$oligo_length_range[1]:input$oligo_length_range[2]
-  
-  # Construct the dataframe
-  target_annotation = lapply(oligo_lengths, function(i) {
-    tibble(start = 1:(l - i + 1), length = i)
-  }) %>%
-    bind_rows() %>%
-    mutate(end = start + length - 1)
-  
-  # Adds "name" sequence to the dataframe
-  target_regions = DNAStringSet(RNA_target[[1]],
-                                start = target_annotation$start,
-                                width = target_annotation$length)
-  names(target_regions) = as.character(target_regions)
-  
-  target_annotation$name = names(target_regions)
-  
-  # initliaze pm columns to avoi dcrash when pm calcualtation is disabled 
-  target_annotation$PM_tot_freq <- NA_real_
-  target_annotation$PM_max_freq <- NA_real_
-  target_annotation$PM_count    <- NA_real_
-
-  if (isTRUE(input$single_aso_input)) {
-    aso_matches <- parsed_asos()
-    
-    if (length(aso_matches) > 0) {
-      rev_comps <- as.character(
-        reverseComplement(DNAStringSet(aso_matches))
-      )
-      
-      target_annotation <- target_annotation[target_annotation$name %in% rev_comps, ]
-      target_annotation$input_order <- match(target_annotation$name, rev_comps)
-      target_annotation <- target_annotation[order(target_annotation$input_order), ]
-    } else {
-      target_annotation <- target_annotation[0, ]
-    }
-  }
-  # ----------------------------------- milestone 6 ----------------------------
-  print("milestone6: Enumerated all possible ASO target sequences")
-  
-
-  # ----------------------------------- milestone 7 ----------------------------
-  print("milestone 7: Prefiltered Oligo sequences ending with G")
-  
-  if (input$linux_input == TRUE) {
-    # 3.4 Estimate Transcript Accessibility for the RNA Target at Single-Nucleotide Resolution
-    accessibility = RNAplfold_R(RNA_target, u.in = max(oligo_lengths)) %>%
-      as_tibble() %>%
-      mutate(end = 1:l) %>%
-      gather(length, accessibility, -end) %>%
-      mutate(length = as.double(length))
-    
-    target_annotation = left_join(target_annotation, accessibility, by =
-                                    c('length', 'end'))
-    
-  }
-  # ----------------------------------- milestone 8 ----------------------------
-  print("milestone 8: Calculated ViennaRNA accessibility score and filtering")
-  
-  nucleobase_seq = reverseComplement(target_regions)
-  
-  # Voeg ze toe aan uni_tar gekoppeld aan name
-  target_annotation$oligo_seq = as.character(nucleobase_seq[target_annotation$name])
-  
-  # Toxicity score acute neurotox score (desired >70)
-  target_annotation$tox_score = calculate_acute_neurotox(target_annotation$oligo_seq)
-  
-  # ----------------------------------- milestone 8.5 --------------------------
-  oligo_dna <- DNAStringSet(target_annotation$oligo_seq)
-  gc_counts <- letterFrequency(oligo_dna, c("G", "C"))
-  oligo_len <- width(oligo_dna)
-  target_annotation$gc_content <- rowSums(gc_counts) / oligo_len * 100
-  
-  # ----------------------------------- milestone 9 ----------------------------
-  print("milestone 9: Calculated toxicity score and filtering")
-  
-  # Define motif weights
-  motif_weights <- c(
-    CCAC = +0.3,
-    TCCC = +0.3,
-    ACTC = +0.2,
-    GCCA = +0.2,
-    CTCT = +0.1,
-    GGGG = -0.2,
-    ACTG = -0.2,
-    TAA  = -0.2,
-    CCGG = -0.1,
-    AAA  = -0.1
-  )
-  
-  seqs <- DNAStringSet(target_annotation$oligo_seq)
-  
-  motif_counts_mat <- sapply(
-    names(motif_weights),
-    function(m) vcountPattern(m, seqs),
-    simplify = "matrix"
-  )
-  
-  if (nrow(target_annotation) == 1) {
-    motif_counts_mat <- t(motif_counts_mat)
-  }
-  
-  motif_counts_df <- as.data.frame(motif_counts_mat, stringsAsFactors = FALSE)
-  
-  motif_scores <- as.matrix(motif_counts_mat) %*% as.numeric(motif_weights)
-  motif_scores <- round(motif_scores[, 1], 6)
-  
-  target_annotation <- bind_cols(
-    target_annotation,
-    motif_counts_df,
-    motif_cor_score = motif_scores
-  )
-  
-  
-  # ----------------------------------- milestone 9.5 --------------------------
-  print("milestone 9.5: Calculated motif correlation score")
-  
-  # Bereken aantal "cg"
-  target_annotation$CGs = run_step("Getting mouse ortholog data", 0.10, {(target_annotation$length -
-                   nchar(gsub('CG', '', target_annotation$name))) / 2
-  })
-
-  # ----------------------------------- milestone 10 ---------------------------
-  print("milestone 10: Calculated CG motifs")
-  
-  options(timeout = 60)
-  
-  # Define the marts for mmusculus and hsapiens
-  martHS <- useEnsembl(
-    biomart = "ENSEMBL_MART_ENSEMBL",
-    dataset = "hsapiens_gene_ensembl",
-    host    = "https://www.ensembl.org"
-  )
-  
-  martMM <- useEnsembl(
-    biomart = "ENSEMBL_MART_ENSEMBL",
-    dataset = "mmusculus_gene_ensembl",
-    host    = "https://www.ensembl.org"
-  )
-  
-  # Get the orthologous Ensembl gene for the provided human Ensembl ID
-  ortho_ENS = getBM(attributes = "mmusculus_homolog_ensembl_gene",
-                    filters = "ensembl_gene_id",
-                    values = ensembl_ID, mart = martHS,
-                    bmHeader = FALSE)
-  
-  # ----------------------------------- milestone 11 ---------------------------
-  print("milestone 11: Get mouse ortholog data for genes")
-  
-  RNA_target_mouse = DNAStringSet(
-    getBM(attributes = c("gene_exon_intron","ensembl_gene_id"),
-          filters = "ensembl_gene_id",
-          values =
-            ortho_ENS$mmusculus_homolog_ensembl_gene,
-          mart = martMM)$gene_exon_intron)
-  
-  # ----------------------------------- milestone 12 ---------------------------
-  print("milestone 12: ")
-  
-  # Obtain all human polymorphisms for the RNA target
-  if (input$polymorphism_input == TRUE) {
-    PMs = getBM(
-      attributes = c("minor_allele_freq", "chromosome_start"),
-      filters = "ensembl_gene_id",
-      values = ensembl_ID,
-      mart = martHS
-    ) %>%
-      as_tibble() %>%
-      arrange(chromosome_start, desc(minor_allele_freq)) %>%
-      filter(!is.na(minor_allele_freq),
-             !duplicated(chromosome_start)) %>%
-      rename(chr_start = chromosome_start, PM_freq = minor_allele_freq)
-  }
-
-  ##If Ensembl is offline and still want to test -> load in manual test data.
-  #PMs <- read.csv("~/PMs.csv")
-
-  
-  # ----------------------------------- milestone 13 ---------------------------
-  print("milestone 13: Get human polymorfisms for RNA target")
-  
-  # Count Nucleobase sequence occurrences
-  
-  # Get the sequences
-  tr = target_annotation$name
-  
-  # Count the sequences by making it a table
-  replica = table(tr)
-  
-  # Save it as NoRepeats
-  target_annotation$NoRepeats = as.vector(replica[tr])
-  
-  # ----------------------------------- milestone 14 ---------------------------
-  print("milestone 14: Count amount of times ASO sequence is repeated in target gene")
-  
-  # High-Frequency Polymorphisms analysis
-  
-  # Correcting end and start cord based on direction
-  if (chr_coord['strand'] == 1) {
-    target_annotation$chr_start = chr_coord['start'] + target_annotation$start - 1
-    target_annotation$chr_end = chr_coord['start'] + target_annotation$end - 1
-  } else {
-    target_annotation$chr_start = chr_coord['end'] - target_annotation$end + 1
-    target_annotation$chr_end = chr_coord['end'] - target_annotation$start + 1
-  }
-  
-  # ----------------------------------- milestone 15 ---------------------------
-  print("milestone 15: Corrected start en end cord based on direction")
-
-  # Keep unique names only and extract
-  # Information base on chr_start from target.
-  if (input$polymorphism_input == TRUE) {
-    PM_freq = PMs %>%
-      mutate(name = map(chr_start, function(X) {
-        filter(target_annotation, chr_start <= X, chr_end >= X) %>%
-          select(name, chr_start_anno = chr_start)
-      })) %>%
-      unnest_legacy() %>%
-      rename(chr_start_PM = chr_start) %>%
-      group_by(name, chr_start_anno) %>%
-      summarise(
-        PM_tot_freq = 1 - prod(1 - PM_freq),
-        PM_max_freq = max(PM_freq),
-        PM_count = n()
-      )
-    
-    # ----------------------------------- milestone 16 -------------------------
-    print("milestone 16: Retrieved point mutation frequency count and chance")
-    
-    # Combine data frames
-    target_annotation = left_join(
-      target_annotation,
-      PM_freq,
-      by = c("name" = "name", "chr_start" = "chr_start_anno")
-    ) %>%
-      mutate(
-        PM_tot_freq = coalesce(PM_tot_freq.y, PM_tot_freq.x),
-        PM_max_freq = coalesce(PM_max_freq.y, PM_max_freq.x),
-        PM_count    = coalesce(PM_count.y, PM_count.x)
-      ) %>%
-      select(-PM_tot_freq.x, -PM_tot_freq.y,
-             -PM_max_freq.x, -PM_max_freq.y,
-             -PM_count.x, -PM_count.y)
-  }
-  
-  
-  # ----------------------------------- milestone 17 ---------------------------
-  print("milestone 17: Joined PM freq table with target annotation")
-  
-  # Match RNA Target Regions to the Mouse Ortholog
-
-  # Get length
-  lm = width(RNA_target_mouse)
-  
-  # Make table of mouse information
-  MM_tab = lapply(oligo_lengths, function(i) {
-    tibble(st = 1:(lm - i + 1), w = i)
-  }) %>%
-    bind_rows()
-  
-  # ----------------------------------- milestone 18.1 -------------------------
-  print("milestone 18.1: Match RNA target to mouse ortholog")
-  
-  # Makes DNAStringSet object with mouse info.
-  RNAsitesMM = DNAStringSet(RNA_target_mouse[[1]],
-                            start = MM_tab$st,
-                            width = MM_tab$w)
-  
-  # Adds if conserved in mouse.
-
-  target_annotation$conserved_in_mmusculus = run_step("Calculating secondary structure characteristics", 0.25, {target_annotation$name %in% RNAsitesMM
-  })
-  
-  # ----------------------------------- milestone 18.2 -------------------------
-  print("milestone 18.2: If selected: Matched mouse ortholog to target gene")
-  
-  if (input$linux_input == TRUE) {
-    # Deze nog toevoegen wanneer viennaRNA werkt
-    target_annotation$sec_energy = RNAselffold_R(target_annotation$oligo_seq)
-    target_annotation$duplex_energy = RNAduplex_R(target_annotation$oligo_seq)
-  }
-  # ----------------------------------- milestone 19 ---------------------------
-  print("milestone 19: Calculated secondary and duplex energy of ASO seq")
-  
-  unfiltered_total_data <- target_annotation
-  
-  nseq_prefilter <- nrow(target_annotation)
-  
-  nseq_ending_G <- nseq_prefilter - nrow(target_annotation %>%
-                          filter(!grepl("^C", name))
-                        )
-  
-  # nseq_toxscore <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_e, "tox_score", input$dropdown_input_e))
-  ## new with slidng
-  tox_rng <- tox_range()  
-  nseq_toxscore <- nseq_prefilter - nrow(
-    target_annotation %>%
-      dplyr::filter(
-        !is.na(tox_score),
-        tox_score >= tox_rng[1],
-        tox_score <= tox_rng[2]
-      )
-  )
-  
-  gc_rng <- gc_range()
-  nseq_gc <- nseq_prefilter - nrow(
-    target_annotation %>%
-      dplyr::filter(
-        !is.na(gc_content),
-        gc_content >= gc_rng[1],
-        gc_content <= gc_rng[2]
-      )
-  )
-  ##
-
-  nseq_pmfreq <- if (isTRUE(input$polymorphism_input)) {
-    pm_rng <- pm_range()
-    
-    nseq_prefilter - nrow(
-      target_annotation %>%
-        dplyr::mutate(PM_tot_freq = tidyr::replace_na(PM_tot_freq, 0)) %>%
-        dplyr::filter(PM_tot_freq >= pm_rng[1], PM_tot_freq <= pm_rng[2])
-    )
-  } else {
-    NA_integer_
-  }
-  
-  
-  nseq_accessible <- if (isTRUE(input$linux_input)) {
-    acc_rng <- acc_range()
-    nseq_prefilter - nrow(
-      target_annotation %>%
-        dplyr::filter(
-          !is.na(accessibility),
-          accessibility >= acc_rng[1],
-          accessibility <= acc_rng[2]
+    withProgress(message = "Running analysis...", value = 0, {
+      run_step <- function(label, amount, expr) {
+        incProgress(0, detail = paste0(label, "..."))
+        on.exit(
+          incProgress(amount, detail = paste0(label)),
+          add = TRUE
         )
-    )
-  } else {
-    NA_integer_
-  }
-  
-  filter_numbers <- tibble(
-    metric = c(
-      "Prefiltered",
-      "ASO ending with G",
-      "Tox score",
-      "GC content",
-      "PM frequency",
-      "Accessibility"
-      ),
-    count = c(
-      nseq_prefilter,
-      nseq_ending_G,
-      nseq_toxscore,
-      nseq_gc,
-      nseq_pmfreq,
-      nseq_accessible
-    )
-  )
-  
-  output$unfiltered_results_table <- renderDT ({
-    datatable(
-      filter_numbers,
-      rownames = FALSE,
-      options = list(dom = "t", ordering = FALSE),
-      class = "compact stripe"
-    )
-  })
-  
-  # ----------------------------------- filtering ------------------------------
-  
-  apply_range <- function(df, col, rng) {
-    df %>%
-      dplyr::filter(
-        !is.na(.data[[col]]),
-        .data[[col]] >= rng[1],
-        .data[[col]] <= rng[2]
-      )
-  }
-  
-  ta <- target_annotation  # startdataset
-  print(nrow(target_annotation))
-  # 1) ASO ending with G filter
-  if (isTRUE(input$ASO_ending_G)) {
-    ta_prev <- ta
-    ta <- ta %>% filter(!grepl("^C", name))
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'ASO ending with G' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'ASO ending with G' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  
-  # 2) tox_score filter
-  if (isTRUE(input$tox_input)) {
-    ta_prev <- ta
-    rng <- tox_range()  # c(min, max)
-    
-    ta <- ta %>%
-      dplyr::filter(
-        !is.na(tox_score),
-        tox_score >= rng[1],
-        tox_score <= rng[2]
-      )
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'tox_score' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  # 2b) GC content filter 
-  if (isTRUE(input$gc_input)) {   
-    ta_prev <- ta
-    rng <- gc_range()  # c(min, max)
-    
-    ta <- ta %>%
-      dplyr::filter(
-        !is.na(gc_content),
-        gc_content >= rng[1],
-        gc_content <= rng[2]
-      )
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'gc_content' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'GC content' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  ###
-  
-  # 3) accessibility filter (alleen als linux + checkbox aanstaan)
-  if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
-    ta_prev <- ta
-    if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
-      ta_prev <- ta
-      rng <- acc_range()
-      ta <- apply_range(ta, "accessibility", rng)
-      
-      if (nrow(ta) == 0) {
-        ta <- ta_prev
-        showNotification("Filter 'accessibility' removed all rows; reverting.", type = "warning")
+        force(expr)
       }
-    }
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'accessibility' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'accessibility' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  
-  # 4) polymorphism NA->0 (geen filter; alleen transform)
-  if (isTRUE(input$polymorphism_input)) {
-    ta <- ta %>%
-      mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
-  }
-  
-  # 5) polymorphism frequency filter
-  if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
-    ta_prev <- ta
-    if (isTRUE(input$polymorphism_input)) {
-      ta <- ta %>%
-        mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
-    }
-    
-    if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
-      ta_prev <- ta
-      rng <- pm_range()  # c(min,max), min fixed at 0
-      ta <- apply_range(ta, "PM_tot_freq", rng)
       
-      if (nrow(ta) == 0) {
-        ta <- ta_prev
-        showNotification("Filter 'PM_tot_freq' removed all rows; reverting.", type = "warning")
+      # ----------------------------------- Functions ------------------------------
+      # Make the tox score function
+      
+      calculate_acute_neurotox <- function(xx) {
+        # make sure input is in character format
+        xx <- as.character(xx)
+        
+        # count the number of each nucleotide
+        lf <- function(x) {
+          x <- tolower(x)
+          x <- strsplit(x, "")[[1]]
+          x <- table(factor(x, levels = c("a", "c", "t", "g")))
+          return(x)
+        }
+        cnt_nt <- as.data.frame(t(sapply(xx, lf)))
+        # count number of nucleotides from the 3'-end untill it finds the first g
+        gfree3 <- function(x) {
+          x <- tolower(x)
+          x <- strsplit(x, "")[[1]]
+          tfg <- x == "g"
+          if (sum(tfg) == 0) {
+            l3 <- NA
+          } else {
+            posg <- c(1:length(x))[tfg]
+            l3 <- length(x) - max(posg)
+          }
+          return(l3)
+        }
+        cnt_gfree3 <- sapply(xx, gfree3)
+        cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
+        cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
+        ## Calculate final score based on trained parameters and return result
+        calc_out <- round(
+          136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
+            4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
+            cnt_gfree3,
+          1
+        )
+        
+        return(as.numeric(calc_out))
       }
-    }
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'PM_tot_freq' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'PM_tot_freq' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  
-  # 6) conserved filter
-  if (isTRUE(input$Conserved_input)) {
-    ta_prev <- ta
-    ta <- ta %>% filter(conserved_in_mmusculus == TRUE)
-    
-    if (nrow(ta) == 0) {
-      ta <- ta_prev
-      message("Filter 'conserved_in_mmusculus' removed all rows; reverting to previous dataset.")
-      showNotification("Filter 'conserved_in_mmusculus' removed all rows; reverting to previous dataset.", type = "warning")
-    }
-  }
-  
-  target_annotation <- ta
-  
-
-  # ----------------------------------- milestone 20 ---------------------------
-  print("milestone 20: Calculated secondary and duplex energy of ASO seq")
-  
-  
-  # count the number of pre-mRNA transcripts with a perfect match 
-
-  # this part will take some time to run...
-  uni_tar = dplyr::select(target_annotation, name, length)%>%
-    unique() %>%
-    split(.,.$length)
-  
-  uni_tar_list <- future_lapply(
-    X = uni_tar,
-    FUN = function(X, HS) {
-      dict0 <- PDict(X$name, max.mismatch = 0)
-      dict1 <- PDict(X$name, max.mismatch = 1)
       
-      # perfect match count
-      pm <- vwhichPDict(
-        pdict = dict0, subject = HS,
-        max.mismatch = 0, min.mismatch = 0
-      )
-      X$gene_hits_pm <- tabulate(unlist(pm), nbins = nrow(X))
       
-      # single mismatch count (no indels)
-      mm1 <- vwhichPDict(
-        pdict = dict1, subject = HS,
-        max.mismatch = 1, min.mismatch = 1
-      )
-      X$gene_hits_1mm <- tabulate(unlist(mm1), nbins = nrow(X))
+      if (input$linux_input == TRUE) {
+        # 2.5.1 Predict accessibility for an RNA target
+        RNAplfold_R = function(seq.char,
+                               L.in = 40,
+                               W.in = 80,
+                               u.in = 16) {
+          cmmnd2 = paste("RNAplfold -L", L.in, "-W", W.in, "-u", u.in)
+          seq.char = as.character(seq.char)
+          cat(seq.char, file = paste("|", cmmnd2, sep = ""))
+          acc.tx = read.delim(
+            "plfold_lunp",
+            as.is     = TRUE,
+            skip      = 2,
+            header    = FALSE,
+            row.names = 1
+          )
+          acc.tx = acc.tx[, colSums(is.na(acc.tx)) != nrow(acc.tx)]
+          colnames(acc.tx) = 1:ncol(acc.tx)
+          file.remove("plfold_lunp")
+          file.remove("plfold_dp.ps")
+          return(acc.tx)
+        }
+        
+        # 2.5.3 Predict duplex formation and self folding of oligonucleotides
+        RNAduplex_R = function(seqs) {
+          sys_cmd = system('RNAduplex',
+                           input = c(seqs, seqs),
+                           intern = TRUE)
+          as.numeric(regmatches(sys_cmd, regexpr("-?\\d+\\.\\d+", sys_cmd)))
+        }
+        
+        RNAselffold_R = function (seqs) {
+          output = system('RNAfold --noPS',
+                          input = c(seqs),
+                          intern = T)
+          output = unlist(strsplit(output[grepl('[0-9]', output)], '[(]'))
+          as.double(gsub(' |[)]', '', output[grepl('[0-9]', output)]))
+        }
+      }
       
-      X
-    },
-    HS = HS,
-    future.seed = TRUE
-  )
-  
-  uni_tar <-run_step("Filtering data", 0.40, {bind_rows(uni_tar_list)
-  })
-  # ----------------------------------- milestone 21 ---------------------------
-  print("milestone 21: Matched ASO sequences to potential off-targets (perfect match, one mismatch")
-  
-  target_annotation <- left_join(target_annotation, uni_tar, by = c("name", "length"))
-  
-  perform_offt <- TRUE
-  
-  if (isTRUE(input$perfect_input) && isTRUE(input$mismatch_input)) {
-    
-    prefilter <- nrow(target_annotation)
-    
-    pm_max <- perf_range()[2]
-    mm_max <- mm_range()[2]
-    
-    target_annotation_filtered <- target_annotation %>%
-      dplyr::filter(
-        gene_hits_pm <= pm_max,
-        gene_hits_1mm <= mm_max
+      # ----------------------------------- Data setup -----------------------------
+      # Store all human pre-mRNA sequences
+      
+      txdb_hsa <- run_step("Retrieving sequences from Ensembl", 0.05, {
+        tryCatch({
+          loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+        }, error = function(e) {
+          message("Primary txdb path not found, trying local path...")
+          loadDb("../txdb_hsa_biomart.db")
+        })
+      })
+      
+      # ----------------------------------- milestone 1 ----------------------------
+      print("milestone1: loaded human database object")
+      
+      # Extract the genes
+      gdb_hsa <- genes(txdb_hsa)
+      
+      # Harmonize seqname style between TxDb and BSgenome
+      # (this fixes the 'invalid sequence name: 1' error)
+      seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
+      
+      # Keep only chromosomes present in BOTH objects
+      common_chrs <- intersect(seqlevels(gdb_hsa), seqlevels(Hsapiens))
+      gdb_hsa <- keepSeqlevels(gdb_hsa, common_chrs, pruning.mode = "coarse")
+      
+      # ----------------------------------- milestone 2 ----------------------------
+      print("milestone2: Subsetted genes from specified chromosomes")
+      
+      # Get the sequences *
+      HS <- getSeq(Hsapiens, gdb_hsa)
+      
+      # ----------------------------------- milestone 3 ----------------------------
+      print("milestone3: Saved human gene sequences")
+      # Target collect the pre-mRNA sequence
+      
+      # Define wanted Ensembl ID
+      ensembl_ID = input$ensemble_id_input
+      
+      # Retrieve a specific RNA target using the Ensembl ID
+      RNA_target = HS[names(HS) == ensembl_ID]
+      
+      
+      # ----------------------------------- milestone 4 ----------------------------
+      print("milestone4: Saved input RNA target (ENSEMBL) information: \n")
+      print(RNA_target)
+      #filters on ensembl ID
+      target_ranges = gdb_hsa[names(gdb_hsa) == ensembl_ID]
+      
+      
+      # Extracts the chromosome name for target range,extracts the start and end
+      # Position of the genomic region and note from which strand it is.
+      # Positive strand 1 ('+'), negative strand -1 ('-'), or unspecified 0 ('*').
+      chr_coord = c(
+        chr = as.numeric(as.character(seqnames(target_ranges))),
+        start = start(target_ranges),
+        end = end(target_ranges),
+        strand = ifelse(strand(target_ranges) == "+", 1, -1)
       )
-    
-    postfilter <- nrow(target_annotation_filtered)
-    removed <- prefilter - postfilter
-    
-    print(paste0(
-      "Filtering Oligo sequences with perfect matches <= ", pm_max,
-      " and 1 mismatch <= ", mm_max
-    ))
-    print(paste0("Rows before filtering: ", prefilter))
-    print(paste0("Rows after filtering: ", postfilter))
-    print(paste0("Filtering removed ", removed, " possible ASOs."))
-    
-    if (postfilter > 0) {
-      target_annotation <- target_annotation_filtered
-    } else {
-      perform_offt <- FALSE
-      showNotification("Filter 'off-targets' removed all rows; reverting.", type = "warning")
-    }
-  }
-  # ----------------------------------- milestone 22 ---------------------------
-  print("milestone 22: Filtered ASOs with too many off targets")
-  
-  if (isTRUE(input$single_aso_input) && "input_order" %in% names(target_annotation)) {
-    target_annotation <- target_annotation[order(target_annotation$input_order), ]
-  } else {
-    target_annotation <- target_annotation[order(target_annotation$gene_hits_pm, target_annotation$gene_hits_1mm), ]
-  }
-  
-  target_annotation <- head(target_annotation, 1000)
-  
-  if (isTRUE(perform_offt)) {
-    
-    ta <- target_annotation %>% 
-      dplyr::select(name, length) %>% 
-      dplyr::distinct()
-    print(nrow(ta))
-    
-    summary_server <- tryCatch(
-      {
-        res_list <- future_lapply(
-          X = seq_len(nrow(ta)),
-          FUN = function(i) {
-            
-            cat("Worker started i=", i, "\n", file = "future_log.txt", append = TRUE)
-            
-            seq_i <- ta$name[[i]]
-            len_i <- ta$length[[i]]
-            
-            # Retrieve the GGGenome information with the default setting of a maximum of 2 mismatches.
-            df <- all_offt(seq_i, mismatches_allowed = 2)
-            
-            cat(
-              "Worker finished i=", i, 
-              " nrow=", if (is.data.frame(df)) nrow(df) else NA, "\n",
-              file = "future_log.txt", append = TRUE
+      
+      # ----------------------------------- milestone 5 ----------------------------
+      print("milestone5: Extracted chromosome coordinates of RNA target")
+      
+      # Set the width of rna_target as value L
+      l = width(RNA_target)
+      
+      # Note length of subsequence
+      oligo_lengths = input$oligo_length_range[1]:input$oligo_length_range[2]
+      
+      # Construct the dataframe
+      target_annotation = lapply(oligo_lengths, function(i) {
+        tibble(start = 1:(l - i + 1), length = i)
+      }) %>%
+        bind_rows() %>%
+        mutate(end = start + length - 1)
+      
+      # Adds "name" sequence to the dataframe
+      target_regions = DNAStringSet(RNA_target[[1]],
+                                    start = target_annotation$start,
+                                    width = target_annotation$length)
+      names(target_regions) = as.character(target_regions)
+      
+      target_annotation$name = names(target_regions)
+      
+      # initliaze pm columns to avoi dcrash when pm calcualtation is disabled 
+      target_annotation$PM_tot_freq <- NA_real_
+      target_annotation$PM_max_freq <- NA_real_
+      target_annotation$PM_count    <- NA_real_
+      
+      if (isTRUE(input$single_aso_input)) {
+        aso_matches <- parsed_asos()
+        
+        if (length(aso_matches) > 0) {
+          rev_comps <- as.character(
+            reverseComplement(DNAStringSet(aso_matches))
+          )
+          
+          target_annotation <- target_annotation[target_annotation$name %in% rev_comps, ]
+          target_annotation$input_order <- match(target_annotation$name, rev_comps)
+          target_annotation <- target_annotation[order(target_annotation$input_order), ]
+        } else {
+          target_annotation <- target_annotation[0, ]
+        }
+      }
+      # ----------------------------------- milestone 6 ----------------------------
+      print("milestone6: Enumerated all possible ASO target sequences")
+      
+      
+      # ----------------------------------- milestone 7 ----------------------------
+      print("milestone 7: Prefiltered Oligo sequences ending with G")
+      
+      if (input$linux_input == TRUE) {
+        # 3.4 Estimate Transcript Accessibility for the RNA Target at Single-Nucleotide Resolution
+        accessibility = RNAplfold_R(RNA_target, u.in = max(oligo_lengths)) %>%
+          as_tibble() %>%
+          mutate(end = 1:l) %>%
+          gather(length, accessibility, -end) %>%
+          mutate(length = as.double(length))
+        
+        target_annotation = left_join(target_annotation, accessibility, by =
+                                        c('length', 'end'))
+        
+      }
+      # ----------------------------------- milestone 8 ----------------------------
+      print("milestone 8: Calculated ViennaRNA accessibility score and filtering")
+      
+      nucleobase_seq = reverseComplement(target_regions)
+      
+      # Voeg ze toe aan uni_tar gekoppeld aan name
+      target_annotation$oligo_seq = as.character(nucleobase_seq[target_annotation$name])
+      
+      # Toxicity score acute neurotox score (desired >70)
+      target_annotation$tox_score = calculate_acute_neurotox(target_annotation$oligo_seq)
+      
+      # ----------------------------------- milestone 8.5 --------------------------
+      oligo_dna <- DNAStringSet(target_annotation$oligo_seq)
+      gc_counts <- letterFrequency(oligo_dna, c("G", "C"))
+      oligo_len <- width(oligo_dna)
+      target_annotation$gc_content <- rowSums(gc_counts) / oligo_len * 100
+      
+      # ----------------------------------- milestone 9 ----------------------------
+      print("milestone 9: Calculated toxicity score and filtering")
+      
+      # Define motif weights
+      motif_weights <- c(
+        CCAC = +0.3,
+        TCCC = +0.3,
+        ACTC = +0.2,
+        GCCA = +0.2,
+        CTCT = +0.1,
+        GGGG = -0.2,
+        ACTG = -0.2,
+        TAA  = -0.2,
+        CCGG = -0.1,
+        AAA  = -0.1
+      )
+      
+      seqs <- DNAStringSet(target_annotation$oligo_seq)
+      
+      motif_counts_mat <- sapply(
+        names(motif_weights),
+        function(m) vcountPattern(m, seqs),
+        simplify = "matrix"
+      )
+      
+      if (nrow(target_annotation) == 1) {
+        motif_counts_mat <- t(motif_counts_mat)
+      }
+      
+      motif_counts_df <- as.data.frame(motif_counts_mat, stringsAsFactors = FALSE)
+      
+      motif_scores <- as.matrix(motif_counts_mat) %*% as.numeric(motif_weights)
+      motif_scores <- round(motif_scores[, 1], 6)
+      
+      target_annotation <- bind_cols(
+        target_annotation,
+        motif_counts_df,
+        motif_cor_score = motif_scores
+      )
+      
+      
+      # ----------------------------------- milestone 9.5 --------------------------
+      print("milestone 9.5: Calculated motif correlation score")
+      
+      # Bereken aantal "cg"
+      target_annotation$CGs = run_step("Getting mouse ortholog data", 0.10, {(target_annotation$length -
+                                                                                nchar(gsub('CG', '', target_annotation$name))) / 2
+      })
+      
+      # ----------------------------------- milestone 10 ---------------------------
+      print("milestone 10: Calculated CG motifs")
+      
+      options(timeout = 60)
+      
+      # Define the marts for mmusculus and hsapiens
+      martHS <- useEnsembl(
+        biomart = "ENSEMBL_MART_ENSEMBL",
+        dataset = "hsapiens_gene_ensembl",
+        host    = "https://www.ensembl.org"
+      )
+      
+      martMM <- useEnsembl(
+        biomart = "ENSEMBL_MART_ENSEMBL",
+        dataset = "mmusculus_gene_ensembl",
+        host    = "https://www.ensembl.org"
+      )
+      
+      # Get the orthologous Ensembl gene for the provided human Ensembl ID
+      ortho_ENS = getBM(attributes = "mmusculus_homolog_ensembl_gene",
+                        filters = "ensembl_gene_id",
+                        values = ensembl_ID, mart = martHS,
+                        bmHeader = FALSE)
+      
+      # ----------------------------------- milestone 11 ---------------------------
+      print("milestone 11: Get mouse ortholog data for genes")
+      
+      RNA_target_mouse = DNAStringSet(
+        getBM(attributes = c("gene_exon_intron","ensembl_gene_id"),
+              filters = "ensembl_gene_id",
+              values =
+                ortho_ENS$mmusculus_homolog_ensembl_gene,
+              mart = martMM)$gene_exon_intron)
+      
+      # ----------------------------------- milestone 12 ---------------------------
+      print("milestone 12: ")
+      
+      # Obtain all human polymorphisms for the RNA target
+      if (input$polymorphism_input == TRUE) {
+        PMs = getBM(
+          attributes = c("minor_allele_freq", "chromosome_start"),
+          filters = "ensembl_gene_id",
+          values = ensembl_ID,
+          mart = martHS
+        ) %>%
+          as_tibble() %>%
+          arrange(chromosome_start, desc(minor_allele_freq)) %>%
+          filter(!is.na(minor_allele_freq),
+                 !duplicated(chromosome_start)) %>%
+          rename(chr_start = chromosome_start, PM_freq = minor_allele_freq)
+      }
+      
+      ##If Ensembl is offline and still want to test -> load in manual test data.
+      #PMs <- read.csv("~/PMs.csv")
+      
+      
+      # ----------------------------------- milestone 13 ---------------------------
+      print("milestone 13: Get human polymorfisms for RNA target")
+      
+      # Count Nucleobase sequence occurrences
+      
+      # Get the sequences
+      tr = target_annotation$name
+      
+      # Count the sequences by making it a table
+      replica = table(tr)
+      
+      # Save it as NoRepeats
+      target_annotation$NoRepeats = as.vector(replica[tr])
+      
+      # ----------------------------------- milestone 14 ---------------------------
+      print("milestone 14: Count amount of times ASO sequence is repeated in target gene")
+      
+      # High-Frequency Polymorphisms analysis
+      
+      # Correcting end and start cord based on direction
+      if (chr_coord['strand'] == 1) {
+        target_annotation$chr_start = chr_coord['start'] + target_annotation$start - 1
+        target_annotation$chr_end = chr_coord['start'] + target_annotation$end - 1
+      } else {
+        target_annotation$chr_start = chr_coord['end'] - target_annotation$end + 1
+        target_annotation$chr_end = chr_coord['end'] - target_annotation$start + 1
+      }
+      
+      # ----------------------------------- milestone 15 ---------------------------
+      print("milestone 15: Corrected start en end cord based on direction")
+      
+      # Keep unique names only and extract
+      # Information base on chr_start from target.
+      if (input$polymorphism_input == TRUE) {
+        PM_freq = PMs %>%
+          mutate(name = map(chr_start, function(X) {
+            filter(target_annotation, chr_start <= X, chr_end >= X) %>%
+              select(name, chr_start_anno = chr_start)
+          })) %>%
+          unnest_legacy() %>%
+          rename(chr_start_PM = chr_start) %>%
+          group_by(name, chr_start_anno) %>%
+          summarise(
+            PM_tot_freq = 1 - prod(1 - PM_freq),
+            PM_max_freq = max(PM_freq),
+            PM_count = n()
+          )
+        
+        # ----------------------------------- milestone 16 -------------------------
+        print("milestone 16: Retrieved point mutation frequency count and chance")
+        
+        # Combine data frames
+        target_annotation = left_join(
+          target_annotation,
+          PM_freq,
+          by = c("name" = "name", "chr_start" = "chr_start_anno")
+        ) %>%
+          mutate(
+            PM_tot_freq = coalesce(PM_tot_freq.y, PM_tot_freq.x),
+            PM_max_freq = coalesce(PM_max_freq.y, PM_max_freq.x),
+            PM_count    = coalesce(PM_count.y, PM_count.x)
+          ) %>%
+          select(-PM_tot_freq.x, -PM_tot_freq.y,
+                 -PM_max_freq.x, -PM_max_freq.y,
+                 -PM_count.x, -PM_count.y)
+      }
+      
+      
+      # ----------------------------------- milestone 17 ---------------------------
+      print("milestone 17: Joined PM freq table with target annotation")
+      
+      # Match RNA Target Regions to the Mouse Ortholog
+      
+      # Get length
+      lm = width(RNA_target_mouse)
+      
+      # Make table of mouse information
+      MM_tab = lapply(oligo_lengths, function(i) {
+        tibble(st = 1:(lm - i + 1), w = i)
+      }) %>%
+        bind_rows()
+      
+      # ----------------------------------- milestone 18.1 -------------------------
+      print("milestone 18.1: Match RNA target to mouse ortholog")
+      
+      # Makes DNAStringSet object with mouse info.
+      RNAsitesMM = DNAStringSet(RNA_target_mouse[[1]],
+                                start = MM_tab$st,
+                                width = MM_tab$w)
+      
+      # Adds if conserved in mouse.
+      
+      target_annotation$conserved_in_mmusculus = run_step("Calculating secondary structure characteristics", 0.25, {target_annotation$name %in% RNAsitesMM
+      })
+      
+      # ----------------------------------- milestone 18.2 -------------------------
+      print("milestone 18.2: If selected: Matched mouse ortholog to target gene")
+      
+      if (input$linux_input == TRUE) {
+        # Deze nog toevoegen wanneer viennaRNA werkt
+        target_annotation$sec_energy = RNAselffold_R(target_annotation$oligo_seq)
+        target_annotation$duplex_energy = RNAduplex_R(target_annotation$oligo_seq)
+      }
+      # ----------------------------------- milestone 19 ---------------------------
+      print("milestone 19: Calculated secondary and duplex energy of ASO seq")
+      
+      unfiltered_total_data <- target_annotation
+      
+      nseq_prefilter <- nrow(target_annotation)
+      
+      nseq_ending_G <- nseq_prefilter - nrow(target_annotation %>%
+                                               filter(!grepl("^C", name))
+      )
+      
+      # nseq_toxscore <- nseq_prefilter - nrow(filter_function(target_annotation, input$numeric_input_e, "tox_score", input$dropdown_input_e))
+      ## new with slidng
+      tox_rng <- tox_range()  
+      nseq_toxscore <- nseq_prefilter - nrow(
+        target_annotation %>%
+          dplyr::filter(
+            !is.na(tox_score),
+            tox_score >= tox_rng[1],
+            tox_score <= tox_rng[2]
+          )
+      )
+      
+      gc_rng <- gc_range()
+      nseq_gc <- nseq_prefilter - nrow(
+        target_annotation %>%
+          dplyr::filter(
+            !is.na(gc_content),
+            gc_content >= gc_rng[1],
+            gc_content <= gc_rng[2]
+          )
+      )
+      ##
+      
+      nseq_pmfreq <- if (isTRUE(input$polymorphism_input)) {
+        pm_rng <- pm_range()
+        
+        nseq_prefilter - nrow(
+          target_annotation %>%
+            dplyr::mutate(PM_tot_freq = tidyr::replace_na(PM_tot_freq, 0)) %>%
+            dplyr::filter(PM_tot_freq >= pm_rng[1], PM_tot_freq <= pm_rng[2])
+        )
+      } else {
+        NA_integer_
+      }
+      
+      
+      nseq_accessible <- if (isTRUE(input$linux_input)) {
+        acc_rng <- acc_range()
+        nseq_prefilter - nrow(
+          target_annotation %>%
+            dplyr::filter(
+              !is.na(accessibility),
+              accessibility >= acc_rng[1],
+              accessibility <= acc_rng[2]
+            )
+        )
+      } else {
+        NA_integer_
+      }
+      
+      filter_numbers <- tibble(
+        metric = c(
+          "Prefiltered",
+          "ASO ending with G",
+          "Tox score",
+          "GC content",
+          "PM frequency",
+          "Accessibility"
+        ),
+        count = c(
+          nseq_prefilter,
+          nseq_ending_G,
+          nseq_toxscore,
+          nseq_gc,
+          nseq_pmfreq,
+          nseq_accessible
+        )
+      )
+      
+      output$unfiltered_results_table <- renderDT ({
+        datatable(
+          filter_numbers,
+          rownames = FALSE,
+          options = list(dom = "t", ordering = FALSE),
+          class = "compact stripe"
+        )
+      })
+      
+      # ----------------------------------- filtering ------------------------------
+      
+      apply_range <- function(df, col, rng) {
+        df %>%
+          dplyr::filter(
+            !is.na(.data[[col]]),
+            .data[[col]] >= rng[1],
+            .data[[col]] <= rng[2]
+          )
+      }
+      
+      ta <- target_annotation  # startdataset
+      print(nrow(target_annotation))
+      # 1) ASO ending with G filter
+      if (isTRUE(input$ASO_ending_G)) {
+        ta_prev <- ta
+        ta <- ta %>% filter(!grepl("^C", name))
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'ASO ending with G' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'ASO ending with G' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      
+      # 2) tox_score filter
+      if (isTRUE(input$tox_input)) {
+        ta_prev <- ta
+        rng <- tox_range()  # c(min, max)
+        
+        ta <- ta %>%
+          dplyr::filter(
+            !is.na(tox_score),
+            tox_score >= rng[1],
+            tox_score <= rng[2]
+          )
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'tox_score' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'tox_score' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      # 2b) GC content filter 
+      if (isTRUE(input$gc_input)) {   
+        ta_prev <- ta
+        rng <- gc_range()  # c(min, max)
+        
+        ta <- ta %>%
+          dplyr::filter(
+            !is.na(gc_content),
+            gc_content >= rng[1],
+            gc_content <= rng[2]
+          )
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'gc_content' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'GC content' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      ###
+      
+      # 3) accessibility filter (alleen als linux + checkbox aanstaan)
+      if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
+        ta_prev <- ta
+        if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
+          ta_prev <- ta
+          rng <- acc_range()
+          ta <- apply_range(ta, "accessibility", rng)
+          
+          if (nrow(ta) == 0) {
+            ta <- ta_prev
+            showNotification("Filter 'accessibility' removed all rows; reverting.", type = "warning")
+          }
+        }
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'accessibility' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'accessibility' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      
+      # 4) polymorphism NA->0 (geen filter; alleen transform)
+      if (isTRUE(input$polymorphism_input)) {
+        ta <- ta %>%
+          mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
+      }
+      
+      # 5) polymorphism frequency filter
+      if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
+        ta_prev <- ta
+        if (isTRUE(input$polymorphism_input)) {
+          ta <- ta %>%
+            mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
+        }
+        
+        if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
+          ta_prev <- ta
+          rng <- pm_range()  # c(min,max), min fixed at 0
+          ta <- apply_range(ta, "PM_tot_freq", rng)
+          
+          if (nrow(ta) == 0) {
+            ta <- ta_prev
+            showNotification("Filter 'PM_tot_freq' removed all rows; reverting.", type = "warning")
+          }
+        }
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'PM_tot_freq' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'PM_tot_freq' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      
+      # 6) conserved filter
+      if (isTRUE(input$Conserved_input)) {
+        ta_prev <- ta
+        ta <- ta %>% filter(conserved_in_mmusculus == TRUE)
+        
+        if (nrow(ta) == 0) {
+          ta <- ta_prev
+          message("Filter 'conserved_in_mmusculus' removed all rows; reverting to previous dataset.")
+          showNotification("Filter 'conserved_in_mmusculus' removed all rows; reverting to previous dataset.", type = "warning")
+        }
+      }
+      
+      target_annotation <- ta
+      
+      
+      # ----------------------------------- milestone 20 ---------------------------
+      print("milestone 20: Calculated secondary and duplex energy of ASO seq")
+      
+      
+      # count the number of pre-mRNA transcripts with a perfect match 
+      
+      # this part will take some time to run...
+      uni_tar = dplyr::select(target_annotation, name, length)%>%
+        unique() %>%
+        split(.,.$length)
+      
+      uni_tar_list <- future_lapply(
+        X = uni_tar,
+        FUN = function(X, HS) {
+          dict0 <- PDict(X$name, max.mismatch = 0)
+          dict1 <- PDict(X$name, max.mismatch = 1)
+          
+          # perfect match count
+          pm <- vwhichPDict(
+            pdict = dict0, subject = HS,
+            max.mismatch = 0, min.mismatch = 0
+          )
+          X$gene_hits_pm <- tabulate(unlist(pm), nbins = nrow(X))
+          
+          # single mismatch count (no indels)
+          mm1 <- vwhichPDict(
+            pdict = dict1, subject = HS,
+            max.mismatch = 1, min.mismatch = 1
+          )
+          X$gene_hits_1mm <- tabulate(unlist(mm1), nbins = nrow(X))
+          
+          X
+        },
+        HS = HS,
+        future.seed = TRUE
+      )
+      
+      uni_tar <-run_step("Searching for off-targets.", 0.40, {bind_rows(uni_tar_list)
+      })
+      # ----------------------------------- milestone 21 ---------------------------
+      print("milestone 21: Matched ASO sequences to potential off-targets (perfect match, one mismatch")
+      
+      target_annotation <- left_join(target_annotation, uni_tar, by = c("name", "length"))
+      
+      perform_offt <- TRUE
+      
+      if (isTRUE(input$perfect_input) && isTRUE(input$mismatch_input)) {
+        
+        prefilter <- nrow(target_annotation)
+        
+        pm_max <- perf_range()[2]
+        mm_max <- mm_range()[2]
+        
+        target_annotation_filtered <- target_annotation %>%
+          dplyr::filter(
+            gene_hits_pm <= pm_max,
+            gene_hits_1mm <= mm_max
+          )
+        
+        postfilter <- nrow(target_annotation_filtered)
+        removed <- prefilter - postfilter
+        
+        print(paste0(
+          "Filtering Oligo sequences with perfect matches <= ", pm_max,
+          " and 1 mismatch <= ", mm_max
+        ))
+        print(paste0("Rows before filtering: ", prefilter))
+        print(paste0("Rows after filtering: ", postfilter))
+        print(paste0("Filtering removed ", removed, " possible ASOs."))
+        
+        if (postfilter > 0) {
+          target_annotation <- target_annotation_filtered
+        } else {
+          perform_offt <- FALSE
+          showNotification("Filter 'off-targets' removed all rows; reverting.", type = "warning")
+        }
+      }
+      # ----------------------------------- milestone 22 ---------------------------
+      print("milestone 22: Filtered ASOs with too many off targets")
+      
+      if (isTRUE(input$single_aso_input) && "input_order" %in% names(target_annotation)) {
+        target_annotation <- target_annotation[order(target_annotation$input_order), ]
+      } else {
+        target_annotation <- target_annotation[order(target_annotation$gene_hits_pm, target_annotation$gene_hits_1mm), ]
+      }
+      
+      target_annotation <- head(target_annotation, 1000)
+      
+      if (isTRUE(perform_offt)) {
+        
+        ta <- target_annotation %>% 
+          dplyr::select(name, length) %>% 
+          dplyr::distinct()
+        print(nrow(ta))
+        
+        # here it prints the number of ASOs for which it will look up the off targets
+        # i could inlcude a break here, whcih shows the number of ASO candidates adn then the estimated 
+        # time the off target search will take with the speed of 1 gene per 3.6 seconds or 1000 genes per hour
+        # do i want there to be a notification or a break in code waiting for user input 
+        # if user input then they will have to stay at the PC until the notification pops up, which is also not good
+        # could also make an option at start which asks the max run time or max numebr of ASOs
+        # quesion is if they put fewer ASOs, which ASOs from the filtering should be used for the off target search
+        # cant just take the first 100 becuase i think they are either not sorted or they are and then it will jus tbe ASOs targeting th ebegnning of the gene
+        
+        summary_server <- tryCatch(
+          {
+            res_list <- future_lapply(
+              X = seq_len(nrow(ta)),
+              FUN = function(i) {
+                
+                cat("Worker started i=", i, "\n", file = "future_log.txt", append = TRUE)
+                
+                seq_i <- ta$name[[i]]
+                len_i <- ta$length[[i]]
+                
+                # Retrieve the GGGenome information with the default setting of a maximum of 2 mismatches.
+                df <- all_offt(seq_i, mismatches_allowed = 2)
+                
+                cat(
+                  "Worker finished i=", i, 
+                  " nrow=", if (is.data.frame(df)) nrow(df) else NA, "\n",
+                  file = "future_log.txt", append = TRUE
+                )
+                
+                if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(NULL)
+                
+                df$name   <- seq_i
+                df$length <- len_i
+                df
+              },
+              future.seed = TRUE
             )
             
-            if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(NULL)
+            out <- dplyr::bind_rows(Filter(Negate(is.null), res_list)) %>%
+              dplyr::mutate(distance = mismatches + deletions + insertions) %>%
+              dplyr::distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
             
-            df$name   <- seq_i
-            df$length <- len_i
-            df
+            out
           },
-          future.seed = TRUE
+          error = function(e) {
+            message("GGGenome is currently unavailable. Off-target features are disabled. ", e$message)
+            NULL
+          }
         )
-        
-        out <- dplyr::bind_rows(Filter(Negate(is.null), res_list)) %>%
-          dplyr::mutate(distance = mismatches + deletions + insertions) %>%
-          dplyr::distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
-        
-        out
-      },
-      error = function(e) {
-        message("GGGenome is currently unavailable. Off-target features are disabled. ", e$message)
-        NULL
       }
-    )
-  }
-  # ----------------------------------- milestone 23 ----------------------------
-  print("milestone 23: GGGenome searched for all ASO off-targets")
-  if (!is.null(summary_server)) {
-  tmp <- tempfile(fileext = ".bgz")
-  
-  # Download GnomAD lof metrics by gene
-  download.file(
-    url <- "https://storage.googleapis.com/gcp-public-data--gnomad/release/2.1.1/constraint/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz", 
-    destfile = tmp,
-    mode = "wb"
-  )
-  gnomad_df <- read_tsv(tmp, show_col_types = FALSE,
-                        col_select = c(gene, transcript, oe_lof))
-  unlink(tmp)
-  
-  # ----------------------------------- milestone 24 ---------------------------
-  print("milestone 24: Downloaded GnomAD lof metrics by gene to dataframe")
-  
-  off_targets_total = left_join(summary_server, gnomad_df, by = c('gene_name' = 'gene'))
-
-  # ----------------------------------- milestone 25 ---------------------------
-  print("milestone 25:")
-  
-  dist_counts <- off_targets_total %>%
-    group_by(name, distance) %>%
-    summarise(n_distance = n(), .groups = "drop") %>%
-    complete(name, distance = 0:2, fill = list(n_distance = 0)) %>%
-    mutate(distance = paste0("n_distance_", distance)) %>%  # bijv. n_distance_0, n_distance_1
-    pivot_wider(
-      names_from  = distance,
-      values_from = n_distance,
-      values_fill = 0
-    )
-
-  # 2. Per name de laagste oe_lof score bepalen
-  oe_lof_min <- off_targets_total %>%
-    filter(distance <= 1) %>%
-    group_by(name) %>%
-    summarise(min_oe_lof = min(oe_lof, na.rm = TRUE), .groups = "drop")
-
-  # 3. Deze twee samenvattingen samenvoegen tot één tabel per name
-  off_summary <- dist_counts %>%
-    left_join(oe_lof_min, by = "name")
-
-  # 4. Met left_join koppelen aan target_annotation op oligo_seq = name
-  target_annotation <- target_annotation %>%
-    left_join(off_summary, by = c("name" = "name"))
-  
-  # ----------------------------------- milestone 26 ---------------------------
-  print("milestone 26:")
-  
-  target_annotation <- target_annotation %>%
-    mutate(
-      off_target_score =
-        1    * n_distance_0 +
-        0.3  * n_distance_1 +
-        0.02 * n_distance_2
-    )
-  }
-  
-  # ----------------------------------- milestone 27 ---------------------------
-  print("milestone 27")
-  print(motif_weights)
-  
-  ## Split correlation motifs from dataframe
-  motif_results_cols <- names(motif_scores)
-  motif_results_cols <- append(motif_results_cols, c('name', 'oligo_seq'))
-  motif_cols <- names(motif_weights)
-  
-  
-  # Motif_results including motif count after filtering
-  motif_results_filtered <- target_annotation %>%
-    select(all_of(motif_results_cols))
- 
-  # Target annotation with just the correlation score
-  target_annotation <- target_annotation %>%
-    select(-all_of(motif_cols))
-  
-  # ----------------------------------- milestone 28 ---------------------------
-  print("milestone28")
-  
-  # Check if the filtered result is empty
-  if (nrow(target_annotation) == 0) {
-    # If empty, return the original target_regions
-    target_annotation <- unfiltered_total_data
-    print("No results after filtering, exporting unfiltered list")
-    showNotification(
-      "No results after filtering, exporting unfiltered list",
-      type = "default",
-      duration = NULL,
-      # Notification stays until clicked away
-      closeButton = TRUE
-    ) # Include a close button)
-  }
-  
-  
-  # Render the tables.
-  output$results1 <- DT::renderDT({
-    req(target_annotation)
-    
-    df <- target_annotation
-    
-    column_order <- c(
-      if (isTRUE(input$single_aso_input)) "input_order",
-      "oligo_seq",
-      "name",
-      "length",
-      "start",
-      "end",
-      "gc_content", 
-      "tox_score",
-      "off_target_score",
-      "n_distance_0",
-      "n_distance_1",
-      "n_distance_2",
-      # "pli_score", # once implemented
-      "sec_energy", 
-      "duplex_energy",
-      "motif_cor_score",
-      "min_oe_lof",
-      "conserved_in_mmusculus",
-      "CGs",
-      "chr_start",
-      "chr_end", 
-      "PM_tot_freq",
-      "PM_max_freq",
-      "PM_count",
-      "gene_hits_pm", 
-      "gene_hits_1mm",
-      "NoRepeats",
-      "accessibility"
-    )
-    df <- df %>%
-      dplyr::select(dplyr::any_of(column_order), dplyr::everything())
-    
-    column_names <- c(
-      input_order            = "Input order",
-      oligo_seq              = "ASO sequence",
-      name                   = "Target (DNA)",
-      length                 = "ASO length (nt)",
-      start                  = "Start position in gene",
-      end                    = "End position in gene",
-      gc_content             = "GC content (%)",
-      tox_score              = "Acute neurotox score",
-      off_target_score       = "Off-target score",
-      n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
-      n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
-      n_distance_0           = "Perfect matches (GGGenome)",
-      # pli_score              = "pLI score".
-      sec_energy             = "ASO self-folding energy",
-      duplex_energy          = "ASO duplex energy",
-      min_oe_lof             = "Min. off-target LoF",
-      motif_cor_score        = "Motif correlation score",
-      conserved_in_mmusculus = "Conserved in mouse",
-      CGs                    = "Number of CpGs",
-      chr_start              = "Chromosome start pos.",
-      chr_end                = "Chromosome end pos.",
-      PM_tot_freq            = "PM total freq.",
-      PM_max_freq            = "PM max freq.",
-      PM_count               = "PM count",
-      gene_hits_pm           = "Perfect matches (Pedersen)",
-      gene_hits_1mm          = "Off-targets 1 mismatch (Pedersen)",
-      NoRepeats              = "Number of repeats",
-      accessibility          = "Accessibility"
-    )
-    to_rename <- intersect(names(df), names(column_names))
-    df <- df %>%
-      dplyr::rename(
-        !!!setNames(to_rename, column_names[to_rename])
-      )
-
-    main_cols <- c(
-      if (isTRUE(input$single_aso_input)) "Input order",
-      "ASO sequence",
-      "Target (DNA)",
-      "ASO length (nt)",
-      "Start",
-      "End",
-      "GC content (%)",
-      "Acute neurotox score",
-      "Off-target score",
-      "Perfect matches (GGGenome)",
-      "Off-targets 1 mismatch (GGGenome)",
-      "Off-targets 2 mismatches (GGGenome)" # , 
-      # "pLI score"
-    )
-    main_cols <- intersect(main_cols, names(df))  
-    main_idx  <- match(main_cols, names(df))
-    extra_idx <- setdiff(seq_along(df), main_idx)
-
-    order_option <- list()
-    if (isTRUE(input$single_aso_input) && "Input order" %in% names(df)) {
-      ord_col <- which(names(df) == "Input order") - 1
-      order_option <- list(list(ord_col, "asc"))
-    } else if ("Off-target score" %in% names(df)) {
-      ws_col <- which(names(df) == "Off-target score") - 1
-      order_option <- list(list(ws_col, "asc"))
-    }
-    
-    column_defs <- list()
-    if (!show_all_cols() && length(extra_idx) > 0) {
-      column_defs[[1]] <- list(
-        visible = FALSE,
-        targets = extra_idx - 1L   
-      )
-    }
-    
-    dt <- DT::datatable(
-      df,
-      rownames  = FALSE,
-      selection = "single",
-      options   = list(
-        dom        = "tip",
-        columnDefs = column_defs,
-        order      = order_option
-      )
-    )
-    
-    DT::formatRound(
-      dt,
-      columns = intersect(c("GC content (%)", "PM total freq.", "PM max freq."), names(df)),
-      digits  = 0
-    )
-  })
-  # ----------------------------- Offtarget analysis ---------------------------
-  
-  # Off-target information is stored in reactiveVals, so dependencies can be easily updated.
-  current_seq <- reactiveVal(NULL)
-  current_mismatch <- reactiveVal(2)
-  current_offtargets <- reactiveVal(NULL)
-  cached_results <- reactiveVal(list())
-  
-  # This warning output is displayed when no results are obtained from GGGenome.
-  #####&*##############
-  # output$gggenome_status <- renderUI({
-  #   if (is.null(summary_server)) {
-  #     div(
-  #       style = "color:red; font-size:16px; font-weight:bold; margin-bottom:10px;",
-  #       "GGGenome is currently unavailable. Off-target features are disabled."
-  #     )
-  #   } else {
-  #     NULL
-  #   }
-  # })
-  #######&*#################
-  
-  # This function only runs when the application is running on Linux. 
-  # It calculates the accessibility of off-targets with a distance of less than 2.
-  # The 80-nt snippet is used in the RNAplfold_R function. 
-  # The matrix from ViennaRNA is converted to long format to obtain the corresponding accessibility score for the off-target positions in the snippet.
-   compute_offtarget_accessibility <- function(df) {
-    if (input$linux_input != TRUE) return(df)
-    
-    for (i in seq_len(nrow(df))) {
-      if (df$distance[i] >= 2){
-        df$offtarget_accessibility[i] <- NA_real_
-        next
-      }
-      
-      offtarget_seq <- gsub("-", "", df$subject_seq[i])
-      l_ot <- nchar(offtarget_seq)
-      
-      snip_result <- acc_snippet(
-        begin_target  = df$start_target[i],
-        end_target    = df$end_target[i],
-        begin_snippet = df$snippet_start[i],
-        end_snippet   = df$snippet_end[i],
-        full_snippet  = df$snippet[i]
-      )
-      
-      l_snipseq <- nchar(snip_result$snippet_seq)
-      
-      df$offtarget_accessibility[i] <-
-        RNAplfold_R(
-          snip_result$snippet_seq,
-          u.in = l_ot
-        ) %>%
-        as_tibble() %>%
-        mutate(end = 1:l_snipseq) %>%
-        gather(length, accessibility, -end) %>%
-        mutate(length = as.integer(length)) %>%
-        filter(
-          length == l_ot,
-          end == snip_result$target_end_internal
-        ) %>%
-        pull(accessibility)
-    }
-    
-    return(df)
-  }
-  
-  observeEvent(input$apply_mismatch, {
-    req(current_seq())
-    
-    mm  <- as.numeric(input$user_mismatch)
-    seq <- toupper(current_seq())
-    key <- paste0("mm", mm)
-    
-    # The selected subset of off-targets is checked to see if it's already stored in R. 
-    # If not, the subset is generated by filtering the total off-target data frame. 
-    # If the user selects a mismatch of 3, GGGenome is called again, but with a mismatch count of 3. 
-    # The subsets are stored in R if they don't already exist, making them easier to retrieve. 
-    # If the user is running Linux, the off-target accessibility information is also added to the subset of data frames.
-    current_mismatch(mm)
-    cache <- cached_results()
-    
-    if (!is.null(cache[[seq]]) && !is.null(cache[[seq]][[key]])) {
-      subset_df <- cache[[seq]][[key]]
-      
-    } else {
-      if (mm %in% c(0, 1, 2)) {
-        subset_df <- off_targets_total %>%
-          filter(toupper(name) == seq, `distance` <= mm)
-        
-      } else if (mm == 3) {
-        showNotification(
-          "Results loading",
-          type = "default",
-          duration = NULL,
-          # Notification stays until clicked away
-          closeButton = TRUE
-        )
-        
-        # Retrieve the GGGenome information with the default setting of up to 3 mismatches if the user chooses this option.        new_res <- all_offt(seq, 3)
-        new_res$name   <- seq
-        new_res$length <- nchar(seq)
-        new_res <- new_res %>%
-          mutate(distance = mismatches + deletions + insertions,
-                 gene_name = str_extract(line, "(?<=\\|)[^;]+")
-          ) %>%
-            distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
-        
+      # ----------------------------------- milestone 23 ----------------------------
+      print("milestone 23: GGGenome searched for all ASO off-targets")
+      if (!is.null(summary_server)) {
         tmp <- tempfile(fileext = ".bgz")
         
+        # Download GnomAD lof metrics by gene
         download.file(
           url <- "https://storage.googleapis.com/gcp-public-data--gnomad/release/2.1.1/constraint/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz", 
           destfile = tmp,
@@ -1605,558 +1290,952 @@ function(input, output, session) {
                               col_select = c(gene, transcript, oe_lof))
         unlink(tmp)
         
-        subset_df = left_join(new_res, gnomad_df, by = c('gene_name' = 'gene'))
-      }
-      
-      subset_df <- compute_offtarget_accessibility(subset_df)
-      
-      if (is.null(cache[[seq]]))
-        cache[[seq]] <- list()
-      cache[[seq]][[key]] <- subset_df
-      cached_results(cache)
-    }
-    
-    if (input$linux_input == TRUE) {
-      subset_df <- subset_df %>% 
-        relocate(offtarget_accessibility, .after = insertions)
-    }
-    current_offtargets(subset_df)
-    
-    # The number of off-targets, off-target information in data frame form is displayed as output and the output can also be downloaded.
-    output$numb_offtargets <- renderText({
-      if (is.null(summary_server)) {
-        return(NULL)
-      }
-      paste0("# off targets: ", nrow(subset_df))})
-  
-  })
-
-  output$offtarget_results <- DT::renderDT({
-    req(current_offtargets())
-    df <- current_offtargets()
-    
-    df_view <- df %>%
-      dplyr::select(-c(
-        line,
-        subject_seq,
-        query_seq,
-        start_target,
-        end_target,
-        snippet,
-        snippet_start,
-        snippet_end,
-        name
-      )) %>%
-      dplyr::select(
-        gene_name,
-        transcript,
-        match_string,
-        length,
-        matches,
-        mismatches,
-        deletions,
-        insertions,
-        distance,
-        offtarget_accessibility,
-        oe_lof,
-        dplyr::everything()
-      )
-    
-    # ---- SAFE display rename (no collisions) ----
-    display_map <- c(
-      gene_name               = "Gene symbol",
-      transcript              = "Transcript (Ensembl)",
-      match_string            = "Match (alignment)",
-      length                  = "Length (nt)",
-      matches                 = "Matches",
-      mismatches              = "Mismatches",
-      deletions               = "Deletions",
-      insertions              = "Insertions",
-      distance                = "Number of Mismatches/Indels",
-      offtarget_accessibility = "Accessibility (off-target)",
-      oe_lof                  = "GnomAD oe_lof"
-    )
-    
-    # apply mapping only where columns exist
-    nm <- names(df_view)
-    nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
-    
-    # enforce uniqueness so DT never crashes
-    names(df_view) <- make.unique(nm2, sep = " (dup) ")
-    
-    # ordering: find the (possibly renamed) distance column
-    dist_idx <- which(names(df_view) == "Number of Mismatches/Indels")
-    if (length(dist_idx) == 0) dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
-    distance_col <- dist_idx - 1  # DT uses 0-based
-    
-    DT::datatable(
-      df_view,
-      rownames = FALSE,
-      options = list(order = list(list(distance_col, "asc")))
-    )
-  })
-  
-  output$download_offtarget <- downloadHandler(
-    filename = function() {
-      paste(
-        'offtargets_',
-        current_seq(),
-        "_mismatches_",
-        current_mismatch(),
-        "_",
-        Sys.Date(),
-        '.csv'
-      )
-    },
-    content = function(con) {
-      if (is.null(summary_server)) {
-        return(NULL)
-      }
-      data_offtarget <- current_offtargets()
-      req(data_offtarget)
-      write.csv2(data_offtarget, con, row.names = FALSE)
-    }
-  )
-  
-  # ---------------- Proteinatlas/OMIM off-target search -----------------------
-  # Function for parsing OMIM and Protein atlast data
-  
-  PAtlas_cache <- reactiveVal(tibble())
-  
-  OMIM_cache <- reactiveVal(tibble())
-  
-  
-  observeEvent(input$PAtlas_OMIM_search, {
-    offtargets <- current_offtargets()
-    req(offtargets)
-    
-    offtargets_d2 <- offtargets %>%
-      filter(distance < 3)
-    
-    ens_ID <- unique(offtargets_d2$transcript)
-    ens_ID <- ens_ID[!is.na(ens_ID) & ens_ID != ""]
-    PAtlas_results <- tibble()
-    pa_cached <- PAtlas_cache()
-    cached_tx <- if (nrow(pa_cached) == 0 || !"transcript" %in% names(pa_cached)) character(0) else unique(pa_cached$transcript)
-    new_tx <- setdiff(ens_ID, cached_tx)
-    if (length(new_tx) > 0) {
-      PAtlas_result_list <- lapply(new_tx, function(tx) {
-        PA_parsed <- parse_PAtlas(tx, input$target_tissue)
-        if (is.null(PA_parsed) || nrow(PA_parsed) == 0) return(NULL)
-        mutate(PA_parsed, transcript = tx)
-      })
-      PAtlas_results <- bind_rows(Filter(Negate(is.null), PAtlas_result_list))
-    }
-    
-    PAtlas_updated <- bind_rows(pa_cached, PAtlas_results) %>%
-      distinct(transcript, .keep_all = TRUE)
-    PAtlas_cache(PAtlas_updated)
-    
-    cols_to_add <- setdiff(names(PAtlas_updated), names(offtargets))
-    cols_to_add <- union("transcript", cols_to_add)
-    
-    offtargets <- offtargets %>%
-      left_join(PAtlas_updated %>%
-                  select(all_of(cols_to_add)), 
-                by = c("transcript" = "transcript"))
-    
-    # OMIM, try/catch for when no OMIM key is in file
-    tryCatch({
-      gene_id <- unique(offtargets_d2$gene_name)
-      gene_id <- gene_id[!is.na(gene_id) & gene_id != ""]
-      
-      omim_cached <- OMIM_cache()
-      cached_gene <- if (nrow(omim_cached) == 0 || !"gene" %in% names(omim_cached)) character(0) else unique(omim_cached$gene)
-      
-      new_genes <- setdiff(gene_id, cached_gene)
-      OMIM_results <- tibble()
-      if (length(new_genes) > 0) {
-        OMIM_results <- lapply(new_genes, OMIM_search) %>%
-          bind_rows()}
-      
-      OMIM_updated <- bind_rows(omim_cached, OMIM_results) %>%
-        distinct(gene, .keep_all = TRUE)
-      
-      OMIM_cache(OMIM_updated)
-      
-      cols_to_add <- setdiff(names(OMIM_updated), names(offtargets))
-      cols_to_add <- union("gene", cols_to_add)
-      
-      offtargets <- offtargets %>%
-        left_join(OMIM_updated %>%
-                    select(all_of(cols_to_add)),
-                  by = c("gene_name" = "gene"))
-    }, error = function(e) {
-      message("OMIM search skipped: No OMIM key found in file or OMIM API unavailable")
-      offtargets
-    })
-    
-    current_offtargets(offtargets)
-    
-  })
-  
-  
-  # -------------------------------- RNase H analysis --------------------------
-  
-  # String reverse function
-  reverse_string <- function(x) {
-    paste0(rev(strsplit(x, "")[[1]]), collapse = "")
-  }
-  
-  # A stored value for use in the second table and download.
-  selected_target <- reactiveVal(NULL)
-  oligo_sequence <- reactiveVal(NULL)
-  rnaseh_stored <- reactiveVal(NULL)
-  
-  # Apply end modifications.
-  observeEvent(input$add_mods, {
-    row_data <- selected_target()
-    if (is.null(row_data))
-      return()
-    
-    # The used data collected from the selected row.
-    rnaseh_data <- rnaseh_results(
-      selected_row_name = row_data$name,
-      oligo_seq = row_data$oligo_seq,
-      mod_5prime = input$mod_5prime,
-      mod_3prime = input$mod_3prime
-    )
-    
-    # Stores the data is usable variable. 
-    rnaseh_stored(rnaseh_data)
-    
-    # Renders table output for rnaseh_results. 
-    output$rnaseh_results <- DT::renderDT({
-      rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
-      DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
-    })
-    
-    # Renders cleavage_visual div on rnaseh page.
-    output$cleavage_visual <- renderUI(div())
-  })
-  
-  # The second observer object gives a visual of the cleavage site on the target sequence.
-  observeEvent(input$rnaseh_results_rows_selected, {
-    row_number <- input$rnaseh_results_rows_selected
-    if (length(row_number) == 0)
-      return()
-    
-    row_data <- selected_target()
-    if (is.null(row_data))
-      return()
-    
-    rnaseh_data <- rnaseh_stored()
-    if (is.null(rnaseh_data))
-      return()
-    
-    # Selected row.
-    selected_row <- rnaseh_data[row_number, ]
-    
-    # Oligo sequence.
-    oligo_seq <- row_data$oligo_seq
-    
-    # Modification inputs to oligo sequence.
-    mod5 <- input$mod_5prime
-    mod3 <- input$mod_3prime
-    
-    oligo_len <- nchar(oligo_seq)
-    
-    # Modified regions of oligo sequence. 
-    mod5_region <- substr(oligo_seq, 1, mod5)
-    mod3_region <- substr(oligo_seq, oligo_len - mod3 + 1, oligo_len)
-    
-    # Unmodified mid-section of oligo sequence. 
-    mid_region <- substr(oligo_seq, mod5 + 1, oligo_len - mod3)
-    
-    # Target mRNA sequence.
-    position_string <- str_split_1(selected_row$position, " - ")
-    start_pos <- as.numeric(position_string[1])
-    
-    # Getting both orientations of the target mRNA sequence. 
-    target_seq_fw <- row_data$name
-    target_seq_rv <- reverse_string(target_seq_fw)
-    
-    rna_len <- nchar(target_seq_fw)
-    
-    # Cleavage position/coordinates for the visualization. 
-    cleavage_start_fw <- start_pos
-    cleavage_pos_fw <- cleavage_start_fw + 6
-    cleavage_pos_rv <- rna_len - cleavage_pos_fw
-    cleavage_site_up <- cleavage_pos_rv - 1
-    cleavage_site_down <- cleavage_pos_rv + 7
-    
-    # Creating all the substrings of the cleavage site for the visualization. 
-    upstream <- substr(target_seq_rv, 1, cleavage_site_up - 1)
-    site_start <- substr(target_seq_rv, cleavage_site_up, cleavage_pos_rv - 1)
-    cut_site <- substr(target_seq_rv, cleavage_pos_rv, cleavage_pos_rv)
-    site_down <- substr(target_seq_rv, cleavage_pos_rv + 1, cleavage_site_down)
-    downstream <- substr(target_seq_rv, cleavage_site_down + 1, rna_len)
-    
-    # The oligo visualization with possible modifications in HTML-format that will be used on the RNase H page.
-    oligo_visual_fw <- paste0(
-      "<b style='color:darkorange;'>5'</b> ",
-      "<span style='font-weight:bold; color:#90D5FF;'>",
-      mod5_region,
-      "</span>",
-      mid_region,
-      "<span style='font-weight:bold; color:#90D5FF;'>",
-      mod3_region,
-      "</span>",
-      " <b style='color:darkorange;'>3'</b>"
-    )
-    
-    # The target mRNA visualization with cleavage site in HTML-format that will be used on the RNase H page.
-    rna_visual_rv <- paste0(
-      "<b style='color:darkorange;'>3'</b> ",
-      upstream,
-      "<span style='background-color: lightblue; color: red; font-weight: bold;'>",
-      site_start,
-      cut_site,
-      "|",
-      site_down,
-      "</span>",
-      downstream,
-      " <b style='color:darkorange;'>5'</b>"
-    )
-    
-    # The structured div element with both oligo and target mRNA sequences in HTML-format being rendered. 
-    output$cleavage_visual <- renderUI({
-      HTML(
-        paste0(
-          "<h5>Oligo sequence (ASO): </h5>",
-          "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
-          oligo_visual_fw,
-          "</div>",
-          "<h5>RNA sequence: </h5>",
-          "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
-          rna_visual_rv,
-          "</div>"
-        )
-      )
-    })
-  })
-  
-  # Download handler for RNase H results. 
-  output$download_rnaseh <- downloadHandler(
-    filename = function() {
-      row_data <- selected_target()
-      if (is.null(row_data)) {
-        "RNaseH_results.xlsx"
-      } else {
-        paste0("RNaseH_results_", row_data$name, ".xlsx")
-      }
-    },
-    content = function(file) {
-      data <- rnaseh_stored()
-      
-      if (is.null(data))
-        data <- data.frame(Message = "No avalable data")
-      
-      data[] <- lapply(data, as.character)
-      
-      wb <- createWorkbook()
-      addWorksheet(wb, "RNaseH_results")
-      writeData(wb, "RNaseH_results", data)
-      saveWorkbook(wb, file, overwrite = TRUE)
-    }
-  )
-  
-  # ----------------------------- Table handlers -------------------------------
-  
-  # Function for table handler call
-  handle_table_events <- function(input,
-                                  output,
-                                  session,
-                                  table_id,
-                                  table_data,
-                                  off_targets_total,
-                                  selected_target,
-                                  oligo_sequence,
-                                  rnaseh_stored,
-                                  current_seq,
-                                  current_mismatch,
-                                  current_offtargets,
-                                  cached_results) {
-    observeEvent({
-      list(input[[paste0(table_id, "_cell_clicked")]], input[[paste0(table_id, "_rows_selected")]])
-    }, {
-      cell <- input[[paste0(table_id, "_cell_clicked")]]
-      row  <- input[[paste0(table_id, "_rows_selected")]]
-      
-      if (!is.null(cell) && !is.null(cell$row)) {
-        session$sendCustomMessage("selectRow", list(table = table_id, row   = cell$row))
-      }
-      
-      if (is.null(row) || length(row) == 0) return()
-        other_table <- if (table_id == "results1")
-          "results2"
-        else
-          "results1"
-        proxy_other <- dataTableProxy(other_table)
-        selectRows(proxy_other, NULL)
+        # ----------------------------------- milestone 24 ---------------------------
+        print("milestone 24: Downloaded GnomAD lof metrics by gene to dataframe")
         
-        row_data <- table_data[row, ]
+        off_targets_total = left_join(summary_server, gnomad_df, by = c('gene_name' = 'gene'))
         
-        # Off-target functionality
+        # ----------------------------------- milestone 25 ---------------------------
+        print("milestone 25:")
         
-        # It is checked whether the clicked line contains the correct information to continue.
-        if (is.null(row_data$name)) return()
-        seq <- toupper(row_data$name)
-        if (!grepl("^[ACGT]+$", seq)) return()
-        
-        # RNaseH functionality
-        selected_target(row_data)
-        oligo_sequence(row_data$oligo_seq)
-        
-        rnaseh_data <- rnaseh_results(
-          selected_row_name = row_data$name,
-          mod_5prime = 5,
-          mod_3prime = 5
-        )
-        rnaseh_stored(rnaseh_data)
-        
-        output$rnaseh_title <- renderText(paste0("RNase H results for: ", row_data$name))
-        
-        output$rnaseh_info <- renderText({
-          HTML(
-            paste0(
-              "length of sequence: ",
-              row_data$length,
-              "<br>",
-              "Oligo sequence (ASO): ",
-              oligo_sequence()
-            )
+        dist_counts <- off_targets_total %>%
+          group_by(name, distance) %>%
+          summarise(n_distance = n(), .groups = "drop") %>%
+          complete(name, distance = 0:2, fill = list(n_distance = 0)) %>%
+          mutate(distance = paste0("n_distance_", distance)) %>%  # bijv. n_distance_0, n_distance_1
+          pivot_wider(
+            names_from  = distance,
+            values_from = n_distance,
+            values_fill = 0
           )
+        
+        # 2. Per name de laagste oe_lof score bepalen
+        oe_lof_min <- off_targets_total %>%
+          filter(distance <= 1) %>%
+          group_by(name) %>%
+          summarise(min_oe_lof = min(oe_lof, na.rm = TRUE), .groups = "drop")
+        
+        # 3. Deze twee samenvattingen samenvoegen tot één tabel per name
+        off_summary <- dist_counts %>%
+          left_join(oe_lof_min, by = "name")
+        
+        # 4. Met left_join koppelen aan target_annotation op oligo_seq = name
+        target_annotation <- target_annotation %>%
+          left_join(off_summary, by = c("name" = "name"))
+        
+        # ----------------------------------- milestone 26 ---------------------------
+        print("milestone 26:")
+        
+        target_annotation <- target_annotation %>%
+          mutate(
+            off_target_score =
+              1    * n_distance_0 +
+              0.3  * n_distance_1 +
+              0.02 * n_distance_2
+          )
+      }
+      
+      # ----------------------------------- milestone 27 ---------------------------
+      print("milestone 27")
+      print(motif_weights)
+      
+      ## Split correlation motifs from dataframe
+      motif_results_cols <- names(motif_scores)
+      motif_results_cols <- append(motif_results_cols, c('name', 'oligo_seq'))
+      motif_cols <- names(motif_weights)
+      
+      
+      # Motif_results including motif count after filtering
+      motif_results_filtered <- target_annotation %>%
+        select(all_of(motif_results_cols))
+      
+      # Target annotation with just the correlation score
+      target_annotation <- target_annotation %>%
+        select(-all_of(motif_cols))
+      
+      # ----------------------------------- milestone 28 ---------------------------
+      print("milestone28")
+      
+      # Check if the filtered result is empty
+      if (nrow(target_annotation) == 0) {
+        # If empty, return the original target_regions
+        target_annotation <- unfiltered_total_data
+        print("No results after filtering, exporting unfiltered list")
+        showNotification(
+          "No results after filtering, exporting unfiltered list",
+          type = "default",
+          duration = NULL,
+          # Notification stays until clicked away
+          closeButton = TRUE
+        ) # Include a close button)
+      }
+      
+      
+      # Render the tables.
+      ################ make download table identical to viewed table
+      results1_data <- reactive({
+        req(target_annotation)
+        
+        df <- target_annotation
+        
+        column_order <- c(
+          if (isTRUE(input$single_aso_input)) "input_order",
+          "oligo_seq",
+          "name",
+          "length",
+          "start",
+          "end",
+          "gc_content",
+          "tox_score",
+          "off_target_score",
+          "n_distance_0",
+          "n_distance_1",
+          "n_distance_2",
+          # "pli_score",
+          "sec_energy",
+          "duplex_energy",
+          "motif_cor_score",
+          "min_oe_lof",
+          "conserved_in_mmusculus",
+          "CGs",
+          "chr_start",
+          "chr_end",
+          "PM_tot_freq",
+          "PM_max_freq",
+          "PM_count",
+          "gene_hits_pm",
+          "gene_hits_1mm",
+          "NoRepeats",
+          "accessibility"
+        )
+        
+        df <- df %>%
+          dplyr::select(dplyr::any_of(column_order), dplyr::everything())
+        
+        column_names <- c(
+          input_order            = "Input order",
+          oligo_seq              = "ASO sequence",
+          name                   = "Target (DNA)",
+          length                 = "ASO length (nt)",
+          start                  = "Start position in gene",
+          end                    = "End position in gene",
+          gc_content             = "GC content (%)",
+          tox_score              = "Acute neurotox score",
+          off_target_score       = "Off-target score",
+          n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
+          n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
+          n_distance_0           = "Perfect matches (GGGenome)",
+          sec_energy             = "ASO self-folding energy",
+          duplex_energy          = "ASO duplex energy",
+          min_oe_lof             = "Min. off-target LoF",
+          motif_cor_score        = "Motif correlation score",
+          conserved_in_mmusculus = "Conserved in mouse",
+          CGs                    = "Number of CpGs",
+          chr_start              = "Chromosome start pos.",
+          chr_end                = "Chromosome end pos.",
+          PM_tot_freq            = "PM total freq.",
+          PM_max_freq            = "PM max freq.",
+          PM_count               = "PM count",
+          gene_hits_pm           = "Perfect matches (Pedersen)",
+          gene_hits_1mm          = "Off-targets 1 mismatch (Pedersen)",
+          NoRepeats              = "Number of repeats",
+          accessibility          = "Accessibility"
+        )
+        
+        to_rename <- intersect(names(df), names(column_names))
+        names(df)[match(to_rename, names(df))] <- column_names[to_rename]
+        
+        if (isTRUE(input$single_aso_input) && "Input order" %in% names(df)) {
+          df <- df %>% dplyr::arrange(`Input order`)
+        } else if ("Off-target score" %in% names(df)) {
+          df <- df %>% dplyr::arrange(dplyr::coalesce(`Off-target score`, Inf))
+        }
+        
+        df
+      })
+      #############
+      
+      output$results1 <- DT::renderDT({
+        df <- results1_data()
+        
+        main_cols <- c(
+          if (isTRUE(input$single_aso_input)) "Input order",
+          "ASO sequence",
+          "Target (DNA)",
+          "ASO length (nt)",
+          "Start position in gene",
+          "End position in gene",
+          "GC content (%)",
+          "Acute neurotox score",
+          "Off-target score",
+          "Perfect matches (GGGenome)",
+          "Off-targets 1 mismatch (GGGenome)",
+          "Off-targets 2 mismatches (GGGenome)"
+        )
+        
+        main_cols <- intersect(main_cols, names(df))
+        main_idx  <- match(main_cols, names(df))
+        extra_idx <- setdiff(seq_along(df), main_idx)
+        
+        column_defs <- list()
+        if (!show_all_cols() && length(extra_idx) > 0) {
+          column_defs[[1]] <- list(
+            visible = FALSE,
+            targets = extra_idx - 1L
+          )
+        }
+        
+        dt <- DT::datatable(
+          df,
+          rownames  = FALSE,
+          selection = "single",
+          options   = list(
+            dom        = "tip",
+            columnDefs = column_defs
+          )
+        )
+        
+        DT::formatRound(
+          dt,
+          columns = intersect(c("GC content (%)", "PM total freq.", "PM max freq."), names(df)),
+          digits  = 0
+        )
+      })
+      # ----------------------------- Offtarget analysis ---------------------------
+      
+      # Off-target information is stored in reactiveVals, so dependencies can be easily updated.
+      current_seq <- reactiveVal(NULL)
+      current_mismatch <- reactiveVal(2)
+      current_offtargets <- reactiveVal(NULL)
+      cached_results <- reactiveVal(list())
+      
+      # This warning output is displayed when no results are obtained from GGGenome.
+      #####&*##############
+      # output$gggenome_status <- renderUI({
+      #   if (is.null(summary_server)) {
+      #     div(
+      #       style = "color:red; font-size:16px; font-weight:bold; margin-bottom:10px;",
+      #       "GGGenome is currently unavailable. Off-target features are disabled."
+      #     )
+      #   } else {
+      #     NULL
+      #   }
+      # })
+      #######&*#################
+      
+      # This function only runs when the application is running on Linux. 
+      # It calculates the accessibility of off-targets with a distance of less than 2.
+      # The 80-nt snippet is used in the RNAplfold_R function. 
+      # The matrix from ViennaRNA is converted to long format to obtain the corresponding accessibility score for the off-target positions in the snippet.
+      compute_offtarget_accessibility <- function(df) {
+        if (input$linux_input != TRUE) return(df)
+        
+        for (i in seq_len(nrow(df))) {
+          if (df$distance[i] >= 2){
+            df$offtarget_accessibility[i] <- NA_real_
+            next
+          }
+          
+          offtarget_seq <- gsub("-", "", df$subject_seq[i])
+          l_ot <- nchar(offtarget_seq)
+          
+          snip_result <- acc_snippet(
+            begin_target  = df$start_target[i],
+            end_target    = df$end_target[i],
+            begin_snippet = df$snippet_start[i],
+            end_snippet   = df$snippet_end[i],
+            full_snippet  = df$snippet[i]
+          )
+          
+          l_snipseq <- nchar(snip_result$snippet_seq)
+          
+          df$offtarget_accessibility[i] <-
+            RNAplfold_R(
+              snip_result$snippet_seq,
+              u.in = l_ot
+            ) %>%
+            as_tibble() %>%
+            mutate(end = 1:l_snipseq) %>%
+            gather(length, accessibility, -end) %>%
+            mutate(length = as.integer(length)) %>%
+            filter(
+              length == l_ot,
+              end == snip_result$target_end_internal
+            ) %>%
+            pull(accessibility)
+        }
+        
+        return(df)
+      }
+      
+      observeEvent(input$apply_mismatch, {
+        req(current_seq())
+        
+        mm  <- as.numeric(input$user_mismatch)
+        seq <- toupper(current_seq())
+        key <- paste0("mm", mm)
+        
+        # The selected subset of off-targets is checked to see if it's already stored in R. 
+        # If not, the subset is generated by filtering the total off-target data frame. 
+        # If the user selects a mismatch of 3, GGGenome is called again, but with a mismatch count of 3. 
+        # The subsets are stored in R if they don't already exist, making them easier to retrieve. 
+        # If the user is running Linux, the off-target accessibility information is also added to the subset of data frames.
+        current_mismatch(mm)
+        cache <- cached_results()
+        
+        if (!is.null(cache[[seq]]) && !is.null(cache[[seq]][[key]])) {
+          subset_df <- cache[[seq]][[key]]
+          
+        } else {
+          if (mm %in% c(0, 1, 2)) {
+            subset_df <- off_targets_total %>%
+              filter(toupper(name) == seq, `distance` <= mm)
+            
+          } else if (mm == 3) {
+            showNotification(
+              "Results loading",
+              type = "default",
+              duration = NULL,
+              # Notification stays until clicked away
+              closeButton = TRUE
+            )
+            
+            # Retrieve the GGGenome information with the default setting of up to 3 mismatches if the user chooses this option.        new_res <- all_offt(seq, 3)
+            new_res$name   <- seq
+            new_res$length <- nchar(seq)
+            new_res <- new_res %>%
+              mutate(distance = mismatches + deletions + insertions,
+                     gene_name = str_extract(line, "(?<=\\|)[^;]+")
+              ) %>%
+              distinct(gene_name, match_string, query_seq, .keep_all = TRUE)
+            
+            tmp <- tempfile(fileext = ".bgz")
+            
+            download.file(
+              url <- "https://storage.googleapis.com/gcp-public-data--gnomad/release/2.1.1/constraint/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz", 
+              destfile = tmp,
+              mode = "wb"
+            )
+            gnomad_df <- read_tsv(tmp, show_col_types = FALSE,
+                                  col_select = c(gene, transcript, oe_lof))
+            unlink(tmp)
+            
+            subset_df = left_join(new_res, gnomad_df, by = c('gene_name' = 'gene'))
+          }
+          
+          subset_df <- compute_offtarget_accessibility(subset_df)
+          
+          if (is.null(cache[[seq]]))
+            cache[[seq]] <- list()
+          cache[[seq]][[key]] <- subset_df
+          cached_results(cache)
+        }
+        
+        if (input$linux_input == TRUE) {
+          subset_df <- subset_df %>% 
+            relocate(offtarget_accessibility, .after = insertions)
+        }
+        current_offtargets(subset_df)
+        
+        # The number of off-targets, off-target information in data frame form is displayed as output and the output can also be downloaded.
+        output$numb_offtargets <- renderText({
+          if (is.null(summary_server)) {
+            return(NULL)
+          }
+          paste0("# off targets: ", nrow(subset_df))})
+        
+      })
+      ###########&*##############
+      # output$offtarget_results <- DT::renderDT({
+      #   req(current_offtargets())
+      #   df <- current_offtargets()
+      #   
+      #   df_view <- df %>%
+      #     dplyr::select(-c(
+      #       line,
+      #       subject_seq,
+      #       query_seq,
+      #       start_target,
+      #       end_target,
+      #       snippet,
+      #       snippet_start,
+      #       snippet_end,
+      #       name
+      #     )) %>%
+      #     dplyr::select(
+      #       gene_name,
+      #       transcript,
+      #       match_string,
+      #       length,
+      #       matches,
+      #       mismatches,
+      #       deletions,
+      #       insertions,
+      #       distance,
+      #       offtarget_accessibility,
+      #       oe_lof,
+      #       dplyr::everything()
+      #     )
+      #   
+      #   # ---- SAFE display rename (no collisions) ----
+      #   display_map <- c(
+      #     gene_name               = "Gene symbol",
+      #     transcript              = "Transcript (Ensembl)",
+      #     match_string            = "Match (alignment)",
+      #     length                  = "Length (nt)",
+      #     matches                 = "Matches",
+      #     mismatches              = "Mismatches",
+      #     deletions               = "Deletions",
+      #     insertions              = "Insertions",
+      #     distance                = "Number of Mismatches/Indels",
+      #     offtarget_accessibility = "Accessibility (off-target)",
+      #     oe_lof                  = "GnomAD oe_lof"
+      #   )
+      #   
+      #   # apply mapping only where columns exist
+      #   nm <- names(df_view)
+      #   nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
+      #   
+      #   # enforce uniqueness so DT never crashes
+      #   names(df_view) <- make.unique(nm2, sep = " (dup) ")
+      #   
+      #   # ordering: find the (possibly renamed) distance column
+      #   dist_idx <- which(names(df_view) == "Number of Mismatches/Indels")
+      #   if (length(dist_idx) == 0) dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
+      #   distance_col <- dist_idx - 1  # DT uses 0-based
+      #   
+      #   DT::datatable(
+      #     df_view,
+      #     rownames = FALSE,
+      #     options = list(order = list(list(distance_col, "asc")))
+      #   )
+      # })
+      ###########&*############## 
+      output$offtarget_results <- DT::renderDT({
+        req(current_offtargets())
+        df <- current_offtargets()
+        
+        df_view <- df %>%
+          dplyr::select(-dplyr::any_of(c(
+            "line",
+            "subject_seq",
+            "query_seq",
+            "start_target",
+            "end_target",
+            "snippet",
+            "snippet_start",
+            "snippet_end",
+            "name"
+          ))) %>%
+          dplyr::select(
+            dplyr::any_of(c(
+              "gene_name",
+              "transcript",
+              "match_string",
+              "length",
+              "matches",
+              "mismatches",
+              "deletions",
+              "insertions",
+              "distance",
+              "offtarget_accessibility",
+              "oe_lof"
+            )),
+            dplyr::everything()
+          )
+        
+        display_map <- c(
+          gene_name               = "Gene symbol",
+          transcript              = "Transcript (Ensembl)",
+          match_string            = "Match (alignment)",
+          length                  = "Length (nt)",
+          matches                 = "Matches",
+          mismatches              = "Mismatches",
+          deletions               = "Deletions",
+          insertions              = "Insertions",
+          distance                = "Number of Mismatches/Indels",
+          offtarget_accessibility = "Accessibility (off-target)",
+          oe_lof                  = "GnomAD oe_lof"
+        )
+        
+        nm <- names(df_view)
+        nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
+        names(df_view) <- make.unique(nm2, sep = " (dup) ")
+        
+        dist_idx <- which(names(df_view) == "Number of Mismatches/Indels")
+        if (length(dist_idx) == 0) {
+          dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
+        }
+        distance_col <- dist_idx - 1
+        
+        DT::datatable(
+          df_view,
+          rownames = FALSE,
+          options = list(order = list(list(distance_col, "asc")))
+        )
+      })
+      
+      output$download_offtarget <- downloadHandler(
+        filename = function() {
+          paste(
+            'offtargets_',
+            current_seq(),
+            "_mismatches_",
+            current_mismatch(),
+            "_",
+            Sys.Date(),
+            '.csv'
+          )
+        },
+        content = function(con) {
+          if (is.null(summary_server)) {
+            return(NULL)
+          }
+          data_offtarget <- current_offtargets()
+          req(data_offtarget)
+          write.csv2(data_offtarget, con, row.names = FALSE)
+        }
+      )
+      
+      # ---------------- Proteinatlas/OMIM off-target search -----------------------
+      # Function for parsing OMIM and Protein atlast data
+      
+      PAtlas_cache <- reactiveVal(tibble())
+      
+      OMIM_cache <- reactiveVal(tibble())
+      
+      
+      observeEvent(input$PAtlas_OMIM_search, {
+        offtargets <- current_offtargets()
+        req(offtargets)
+        
+        offtargets_d2 <- offtargets %>%
+          filter(distance < 3)
+        
+        ens_ID <- unique(offtargets_d2$transcript)
+        ens_ID <- ens_ID[!is.na(ens_ID) & ens_ID != ""]
+        PAtlas_results <- tibble()
+        pa_cached <- PAtlas_cache()
+        cached_tx <- if (nrow(pa_cached) == 0 || !"transcript" %in% names(pa_cached)) character(0) else unique(pa_cached$transcript)
+        new_tx <- setdiff(ens_ID, cached_tx)
+        if (length(new_tx) > 0) {
+          PAtlas_result_list <- lapply(new_tx, function(tx) {
+            PA_parsed <- parse_PAtlas(tx, input$target_tissue)
+            if (is.null(PA_parsed) || nrow(PA_parsed) == 0) return(NULL)
+            mutate(PA_parsed, transcript = tx)
+          })
+          PAtlas_results <- bind_rows(Filter(Negate(is.null), PAtlas_result_list))
+        }
+        
+        PAtlas_updated <- bind_rows(pa_cached, PAtlas_results) %>%
+          distinct(transcript, .keep_all = TRUE)
+        PAtlas_cache(PAtlas_updated)
+        
+        cols_to_add <- setdiff(names(PAtlas_updated), names(offtargets))
+        cols_to_add <- union("transcript", cols_to_add)
+        
+        offtargets <- offtargets %>%
+          left_join(PAtlas_updated %>%
+                      select(all_of(cols_to_add)), 
+                    by = c("transcript" = "transcript"))
+        
+        # OMIM, try/catch for when no OMIM key is in file
+        tryCatch({
+          gene_id <- unique(offtargets_d2$gene_name)
+          gene_id <- gene_id[!is.na(gene_id) & gene_id != ""]
+          
+          omim_cached <- OMIM_cache()
+          cached_gene <- if (nrow(omim_cached) == 0 || !"gene" %in% names(omim_cached)) character(0) else unique(omim_cached$gene)
+          
+          new_genes <- setdiff(gene_id, cached_gene)
+          OMIM_results <- tibble()
+          if (length(new_genes) > 0) {
+            OMIM_results <- lapply(new_genes, OMIM_search) %>%
+              bind_rows()}
+          
+          OMIM_updated <- bind_rows(omim_cached, OMIM_results) %>%
+            distinct(gene, .keep_all = TRUE)
+          
+          OMIM_cache(OMIM_updated)
+          
+          cols_to_add <- setdiff(names(OMIM_updated), names(offtargets))
+          cols_to_add <- union("gene", cols_to_add)
+          
+          offtargets <- offtargets %>%
+            left_join(OMIM_updated %>%
+                        select(all_of(cols_to_add)),
+                      by = c("gene_name" = "gene"))
+        }, error = function(e) {
+          message("OMIM search skipped: No OMIM key found in file or OMIM API unavailable")
+          offtargets
         })
         
+        current_offtargets(offtargets)
+        
+      })
+      
+      
+      # -------------------------------- RNase H analysis --------------------------
+      
+      # String reverse function
+      reverse_string <- function(x) {
+        paste0(rev(strsplit(x, "")[[1]]), collapse = "")
+      }
+      
+      # A stored value for use in the second table and download.
+      selected_target <- reactiveVal(NULL)
+      oligo_sequence <- reactiveVal(NULL)
+      rnaseh_stored <- reactiveVal(NULL)
+      
+      # Apply end modifications.
+      observeEvent(input$add_mods, {
+        row_data <- selected_target()
+        if (is.null(row_data))
+          return()
+        
+        # The used data collected from the selected row.
+        rnaseh_data <- rnaseh_results(
+          selected_row_name = row_data$name,
+          oligo_seq = row_data$oligo_seq,
+          mod_5prime = input$mod_5prime,
+          mod_3prime = input$mod_3prime
+        )
+        
+        # Stores the data is usable variable. 
+        rnaseh_stored(rnaseh_data)
+        
+        # Renders table output for rnaseh_results. 
         output$rnaseh_results <- DT::renderDT({
           rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
           DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
         })
         
-        updateTabsetPanel(session, "tabs_main", selected = "RNase H cleavage results")
+        # Renders cleavage_visual div on rnaseh page.
+        output$cleavage_visual <- renderUI(div())
+      })
+      
+      # The second observer object gives a visual of the cleavage site on the target sequence.
+      observeEvent(input$rnaseh_results_rows_selected, {
+        row_number <- input$rnaseh_results_rows_selected
+        if (length(row_number) == 0)
+          return()
         
-        # Off-target functionality
-        if (!is.null(summary_server)) {
-          
-        # Once GGGenome has returned output, the reactiveVals are updated with the correct information for the selected row. 
-        # First, R checks whether the correct data frame has already been saved; otherwise, it is created by filtering the off_targets_total data frame and saving it to easily access the correct data frame within the same session. 
-        # If Linux is running, the off-target accessibility is also calculated and added to the data frame.
-          
-        current_seq(seq)
-        current_mismatch(2)
-        updateSelectInput(session, "user_mismatch", selected = 2)
+        row_data <- selected_target()
+        if (is.null(row_data))
+          return()
         
-        mm <- current_mismatch()
+        rnaseh_data <- rnaseh_stored()
+        if (is.null(rnaseh_data))
+          return()
         
-        key <- paste0("mm", mm)
-        cache <- cached_results()
+        # Selected row.
+        selected_row <- rnaseh_data[row_number, ]
         
-        if (!is.null(cache[[seq]]) && !is.null(cache[[seq]][[key]])) {
-          default_subset <- cache[[seq]][[key]]
-          
-        } else {
-          default_subset <- off_targets_total %>%
-            filter(toupper(name) == seq, `distance` <= 2)
-        }
+        # Oligo sequence.
+        oligo_seq <- row_data$oligo_seq
         
-        if (input$linux_input == TRUE) {
-          default_subset <- compute_offtarget_accessibility(default_subset)
-          default_subset <- default_subset %>% 
-            relocate(offtarget_accessibility, .after = insertions)
-        }
+        # Modification inputs to oligo sequence.
+        mod5 <- input$mod_5prime
+        mod3 <- input$mod_3prime
         
-        # Cache
-        cache[[seq]][[key]] <- default_subset
-        cached_results(cache)
+        oligo_len <- nchar(oligo_seq)
         
-        # results
-        default_subset[order(default_subset$distance), ]
-        current_offtargets(default_subset)
+        # Modified regions of oligo sequence. 
+        mod5_region <- substr(oligo_seq, 1, mod5)
+        mod3_region <- substr(oligo_seq, oligo_len - mod3 + 1, oligo_len)
         
-        # The results are displayed as output.
+        # Unmodified mid-section of oligo sequence. 
+        mid_region <- substr(oligo_seq, mod5 + 1, oligo_len - mod3)
         
-        output$offtarget_title <- renderText({
-          if (is.null(summary_server)) {
-            return(NULL)
-          }
-          paste0("Off target results for: ", seq)
+        # Target mRNA sequence.
+        position_string <- str_split_1(selected_row$position, " - ")
+        start_pos <- as.numeric(position_string[1])
+        
+        # Getting both orientations of the target mRNA sequence. 
+        target_seq_fw <- row_data$name
+        target_seq_rv <- reverse_string(target_seq_fw)
+        
+        rna_len <- nchar(target_seq_fw)
+        
+        # Cleavage position/coordinates for the visualization. 
+        cleavage_start_fw <- start_pos
+        cleavage_pos_fw <- cleavage_start_fw + 6
+        cleavage_pos_rv <- rna_len - cleavage_pos_fw
+        cleavage_site_up <- cleavage_pos_rv - 1
+        cleavage_site_down <- cleavage_pos_rv + 7
+        
+        # Creating all the substrings of the cleavage site for the visualization. 
+        upstream <- substr(target_seq_rv, 1, cleavage_site_up - 1)
+        site_start <- substr(target_seq_rv, cleavage_site_up, cleavage_pos_rv - 1)
+        cut_site <- substr(target_seq_rv, cleavage_pos_rv, cleavage_pos_rv)
+        site_down <- substr(target_seq_rv, cleavage_pos_rv + 1, cleavage_site_down)
+        downstream <- substr(target_seq_rv, cleavage_site_down + 1, rna_len)
+        
+        # The oligo visualization with possible modifications in HTML-format that will be used on the RNase H page.
+        oligo_visual_fw <- paste0(
+          "<b style='color:darkorange;'>5'</b> ",
+          "<span style='font-weight:bold; color:#90D5FF;'>",
+          mod5_region,
+          "</span>",
+          mid_region,
+          "<span style='font-weight:bold; color:#90D5FF;'>",
+          mod3_region,
+          "</span>",
+          " <b style='color:darkorange;'>3'</b>"
+        )
+        
+        # The target mRNA visualization with cleavage site in HTML-format that will be used on the RNase H page.
+        rna_visual_rv <- paste0(
+          "<b style='color:darkorange;'>3'</b> ",
+          upstream,
+          "<span style='background-color: lightblue; color: red; font-weight: bold;'>",
+          site_start,
+          cut_site,
+          "|",
+          site_down,
+          "</span>",
+          downstream,
+          " <b style='color:darkorange;'>5'</b>"
+        )
+        
+        # The structured div element with both oligo and target mRNA sequences in HTML-format being rendered. 
+        output$cleavage_visual <- renderUI({
+          HTML(
+            paste0(
+              "<h5>Oligo sequence (ASO): </h5>",
+              "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
+              oligo_visual_fw,
+              "</div>",
+              "<h5>RNA sequence: </h5>",
+              "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
+              rna_visual_rv,
+              "</div>"
+            )
+          )
         })
-        output$aso_seq <- renderText({
-          if (is.null(summary_server)) {
-            return(NULL)
+      })
+      
+      # Download handler for RNase H results. 
+      output$download_rnaseh <- downloadHandler(
+        filename = function() {
+          row_data <- selected_target()
+          if (is.null(row_data)) {
+            "RNaseH_results.xlsx"
+          } else {
+            paste0("RNaseH_results_", row_data$name, ".xlsx")
           }
-          paste0("ASO sequence: ", as.character(reverseComplement(DNAString(seq))))
-        })
-        output$numb_offtargets <- renderText({
-          if (is.null(summary_server)) {
-            return(NULL)
-          }
-          paste0("# off targets: ", nrow(default_subset))
-        })
+        },
+        content = function(file) {
+          data <- rnaseh_stored()
+          
+          if (is.null(data))
+            data <- data.frame(Message = "No avalable data")
+          
+          data[] <- lapply(data, as.character)
+          
+          wb <- createWorkbook()
+          addWorksheet(wb, "RNaseH_results")
+          writeData(wb, "RNaseH_results", data)
+          saveWorkbook(wb, file, overwrite = TRUE)
         }
-    })
-  }
-  
-  # Table one handler call
-  handle_table_events(
-    input = input,
-    output = output,
-    session = session,
-    table_id = "results1",
-    table_data = target_annotation,
-    off_targets_total = off_targets_total,
-    selected_target = selected_target,
-    oligo_sequence = oligo_sequence,
-    rnaseh_stored = rnaseh_stored,
-    current_seq = current_seq,
-    current_mismatch = current_mismatch,
-    current_offtargets = current_offtargets,
-    cached_results = cached_results
-  )
-  
-  # Table two handler call
-  handle_table_events(
-    input = input,
-    output = output,
-    session = session,
-    table_id = "results2",
-    table_data = nucleobase_select,
-    off_targets_total = off_targets_total,
-    selected_target = selected_target,
-    oligo_sequence = oligo_sequence,
-    rnaseh_stored = rnaseh_stored,
-    current_seq = current_seq,
-    current_mismatch = current_mismatch,
-    current_offtargets = current_offtargets,
-    cached_results = cached_results
-  )
-  
-  # ----------------------------- End of script --------------------------------
-  # unfiltered data downloader
-  output$Download_unfiltered <- downloadHandler(
-    
-    filename = function() {
-      paste0(
-        "unfiltered_data_results_",
-        format(Sys.time(), "%Y%m%d_%H%M%S"),
-        ".csv"
       )
-    },
-    
-    content = function(file) {
-      write.csv(
-        unfiltered_total_data,
-        file,
-        row.names = FALSE
+      
+      # ----------------------------- Table handlers -------------------------------
+      
+      # Function for table handler call
+      handle_table_events <- function(input,
+                                      output,
+                                      session,
+                                      table_id,
+                                      table_data,
+                                      off_targets_total,
+                                      selected_target,
+                                      oligo_sequence,
+                                      rnaseh_stored,
+                                      current_seq,
+                                      current_mismatch,
+                                      current_offtargets,
+                                      cached_results) {
+        observeEvent({
+          list(input[[paste0(table_id, "_cell_clicked")]], input[[paste0(table_id, "_rows_selected")]])
+        }, {
+          cell <- input[[paste0(table_id, "_cell_clicked")]]
+          row  <- input[[paste0(table_id, "_rows_selected")]]
+          
+          if (!is.null(cell) && !is.null(cell$row)) {
+            session$sendCustomMessage("selectRow", list(table = table_id, row   = cell$row))
+          }
+          
+          if (is.null(row) || length(row) == 0) return()
+          other_table <- if (table_id == "results1")
+            "results2"
+          else
+            "results1"
+          proxy_other <- dataTableProxy(other_table)
+          selectRows(proxy_other, NULL)
+          
+          row_data <- table_data[row, ]
+          
+          # Off-target functionality
+          
+          # It is checked whether the clicked line contains the correct information to continue.
+          if (is.null(row_data$name)) return()
+          seq <- toupper(row_data$name)
+          if (!grepl("^[ACGT]+$", seq)) return()
+          
+          # RNaseH functionality
+          selected_target(row_data)
+          oligo_sequence(row_data$oligo_seq)
+          
+          rnaseh_data <- rnaseh_results(
+            selected_row_name = row_data$name,
+            mod_5prime = 5,
+            mod_3prime = 5
+          )
+          rnaseh_stored(rnaseh_data)
+          
+          output$rnaseh_title <- renderText(paste0("RNase H results for: ", row_data$name))
+          
+          output$rnaseh_info <- renderText({
+            HTML(
+              paste0(
+                "length of sequence: ",
+                row_data$length,
+                "<br>",
+                "Oligo sequence (ASO): ",
+                oligo_sequence()
+              )
+            )
+          })
+          
+          output$rnaseh_results <- DT::renderDT({
+            rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
+            DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
+          })
+          
+          updateTabsetPanel(session, "tabs_main", selected = "RNase H cleavage results")
+          
+          # Off-target functionality
+          if (!is.null(summary_server)) {
+            
+            # Once GGGenome has returned output, the reactiveVals are updated with the correct information for the selected row. 
+            # First, R checks whether the correct data frame has already been saved; otherwise, it is created by filtering the off_targets_total data frame and saving it to easily access the correct data frame within the same session. 
+            # If Linux is running, the off-target accessibility is also calculated and added to the data frame.
+            
+            current_seq(seq)
+            current_mismatch(2)
+            updateSelectInput(session, "user_mismatch", selected = 2)
+            
+            mm <- current_mismatch()
+            
+            key <- paste0("mm", mm)
+            cache <- cached_results()
+            
+            if (!is.null(cache[[seq]]) && !is.null(cache[[seq]][[key]])) {
+              default_subset <- cache[[seq]][[key]]
+              
+            } else {
+              default_subset <- off_targets_total %>%
+                filter(toupper(name) == seq, `distance` <= 2)
+            }
+            
+            if (input$linux_input == TRUE) {
+              default_subset <- compute_offtarget_accessibility(default_subset)
+              default_subset <- default_subset %>% 
+                relocate(offtarget_accessibility, .after = insertions)
+            }
+            
+            # Cache
+            cache[[seq]][[key]] <- default_subset
+            cached_results(cache)
+            
+            # results
+            default_subset[order(default_subset$distance), ]
+            current_offtargets(default_subset)
+            
+            # The results are displayed as output.
+            
+            output$offtarget_title <- renderText({
+              if (is.null(summary_server)) {
+                return(NULL)
+              }
+              paste0("Off target results for: ", seq)
+            })
+            output$aso_seq <- renderText({
+              if (is.null(summary_server)) {
+                return(NULL)
+              }
+              paste0("ASO sequence: ", as.character(reverseComplement(DNAString(seq))))
+            })
+            output$numb_offtargets <- renderText({
+              if (is.null(summary_server)) {
+                return(NULL)
+              }
+              paste0("# off targets: ", nrow(default_subset))
+            })
+          }
+        })
+      }
+      
+      # Table one handler call
+      handle_table_events(
+        input = input,
+        output = output,
+        session = session,
+        table_id = "results1",
+        table_data = target_annotation,
+        off_targets_total = off_targets_total,
+        selected_target = selected_target,
+        oligo_sequence = oligo_sequence,
+        rnaseh_stored = rnaseh_stored,
+        current_seq = current_seq,
+        current_mismatch = current_mismatch,
+        current_offtargets = current_offtargets,
+        cached_results = cached_results
       )
-    }
-  )
-  
-  target_annotation[order(target_annotation$off_target_score), ]
-   # Filtered data downloader
+      
+      # Table two handler call
+      handle_table_events(
+        input = input,
+        output = output,
+        session = session,
+        table_id = "results2",
+        table_data = nucleobase_select,
+        off_targets_total = off_targets_total,
+        selected_target = selected_target,
+        oligo_sequence = oligo_sequence,
+        rnaseh_stored = rnaseh_stored,
+        current_seq = current_seq,
+        current_mismatch = current_mismatch,
+        current_offtargets = current_offtargets,
+        cached_results = cached_results
+      )
+      
+      # ----------------------------- End of script --------------------------------
+      # unfiltered data downloader
+      output$Download_unfiltered <- downloadHandler(
+        
+        filename = function() {
+          paste0(
+            "unfiltered_data_results_",
+            format(Sys.time(), "%Y%m%d_%H%M%S"),
+            ".csv"
+          )
+        },
+        
+        content = function(file) {
+          write.csv(
+            unfiltered_total_data,
+            file,
+            row.names = FALSE
+          )
+        }
+      )
+      
+      target_annotation[order(target_annotation$off_target_score), ]
+      # Filtered data downloader
       output$Download_filtered <- downloadHandler(
-
+        
         filename = function() {
           paste0(
             "Filtered_data_results_",
@@ -2167,24 +2246,124 @@ function(input, output, session) {
         
         content = function(file) {
           write.csv(
-            target_annotation,
+            results1_data(),
             file,
             row.names = FALSE
           )
         }
       )
+    })
+    
+    end_time <- Sys.time()
+    elapsed_str <- format_elapsed(start_time, end_time)
+    
+    showNotification(
+      paste("Run completed in", elapsed_str),
+      type = "default",
+      duration = NULL,
+      closeButton = TRUE
+    )
   })
-
-  end_time <- Sys.time()
-  elapsed_str <- format_elapsed(start_time, end_time)
   
-  showNotification(
-    paste("Run completed in", elapsed_str),
-    type = "default",
-    duration = NULL,
-    closeButton = TRUE
-  )
-  })
+  ###############################################################
+  ###############################################################
+  ###########                Patient tab          ###############
+  ###############################################################
+  ###############################################################
+  
+  # observeEvent(input$run_patient_button, {
+  #   
+  #   req(input$ensemble_id_input_patient)
+  #   req(input$patient_variant_file)
+  #   
+  #   withProgress(message = "Running patient-specific analysis...", value = 0, {
+  #     
+  #     txdb_hsa <- loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+  #     gdb_hsa <- genes(txdb_hsa)
+  #     seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
+  #     
+  #     ensembl_ID <- input$ensemble_id_input_patient
+  #     target_ranges <- gdb_hsa[names(gdb_hsa) == ensembl_ID]
+  #     
+  #     req(length(target_ranges) == 1)
+  #     
+  #     gene_chr    <- as.character(seqnames(target_ranges))
+  #     gene_start  <- start(target_ranges)
+  #     gene_end    <- end(target_ranges)
+  #     gene_strand <- as.character(strand(target_ranges))
+  #     
+  #     snvs_raw <- read_patient_snvs(input$patient_variant_file$datapath)
+  #     snvs_gene <- filter_snvs_to_gene(snvs_raw, gene_chr, gene_start, gene_end)
+  #     
+  #     validate(
+  #       need(nrow(snvs_gene) > 0, "No patient SNVs fall within the selected gene.")
+  #     )
+  #     
+  #     flank <- input$patient_flank
+  #     window_gr <- make_patient_window(
+  #       gene_chr = gene_chr,
+  #       gene_start = gene_start,
+  #       gene_end = gene_end,
+  #       snvs = snvs_gene,
+  #       flank = flank,
+  #       strand = gene_strand
+  #     )
+  #     
+  #     ref_window <- getSeq(Hsapiens, window_gr)
+  #     patient_window <- apply_snvs_to_window(
+  #       ref_seq = ref_window,
+  #       window_start = start(window_gr),
+  #       snvs = snvs_gene
+  #     )
+  #     
+  #     RNA_target_patient <- patient_window
+  #     
+  #     l <- width(RNA_target_patient)
+  #     oligo_lengths <- input$patient_oligo_length_range[1]:input$patient_oligo_length_range[2]
+  #     
+  #     target_annotation <- lapply(oligo_lengths, function(i) {
+  #       tibble(start = 1:(l - i + 1), length = i)
+  #     }) %>%
+  #       bind_rows() %>%
+  #       mutate(end = start + length - 1)
+  #     
+  #     target_regions <- DNAStringSet(
+  #       RNA_target_patient[[1]],
+  #       start = target_annotation$start,
+  #       width = target_annotation$length
+  #     )
+  #     
+  #     names(target_regions) <- as.character(target_regions)
+  #     target_annotation$name <- names(target_regions)
+  #     
+  #     nucleobase_seq <- reverseComplement(target_regions)
+  #     target_annotation$oligo_seq <- as.character(nucleobase_seq)
+  #     
+  #     if (gene_strand == "+") {
+  #       target_annotation$chr_start <- start(window_gr) + target_annotation$start - 1
+  #       target_annotation$chr_end   <- start(window_gr) + target_annotation$end - 1
+  #     } else {
+  #       target_annotation$chr_start <- end(window_gr) - target_annotation$end + 1
+  #       target_annotation$chr_end   <- end(window_gr) - target_annotation$start + 1
+  #     }
+  #     
+  #     target_annotation <- annotate_patient_snv_overlap(target_annotation, snvs_gene)
+  #     
+  #     target_annotation$tox_score <- calculate_acute_neurotox(target_annotation$oligo_seq)
+  #     
+  #     oligo_dna <- DNAStringSet(target_annotation$oligo_seq)
+  #     gc_counts <- letterFrequency(oligo_dna, c("G", "C"))
+  #     oligo_len <- width(oligo_dna)
+  #     target_annotation$gc_content <- rowSums(gc_counts) / oligo_len * 100
+  #     
+  #     output$patient_results <- renderDT({
+  #       datatable(target_annotation, rownames = FALSE)
+  #     })
+  #   })
+  # })
+  # 
+  
+  
 }
 
 # this code is run a single time, it does not need to be repeated
@@ -2222,7 +2401,10 @@ function(input, output, session) {
 # saveRDS(bm_map, "gene_symbol_map.rds")
 ##################################################################
 
-
+# 1000 genes per hour
+# 16 genes per min
+# 0.277777 genese per second
+# 1 gene per 3.6 seconds
 
 
 
