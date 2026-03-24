@@ -189,8 +189,6 @@ function(input, output, session) {
   
   # ----------------------------- BioMart startup check -----------------------
   
-  options(timeout = 20)
-  
   check_biomart <- function() {
     tryCatch({
       martHS <- biomaRt::useEnsembl(
