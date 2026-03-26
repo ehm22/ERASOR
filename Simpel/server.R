@@ -18,6 +18,10 @@ library(openxlsx)
 library(future)
 library(future.apply)
 
+####$$$####
+library(stringr)
+####$$$####
+
 source("../tools/GGGenome_functions.R")
 source("../tools/RNaseH_script.R")
 source("../tools/Off_target_tissue.R")
@@ -29,7 +33,7 @@ if (.Platform$OS.type == "windows") {
 } else {
   plan(multicore, workers = 8)
 }
-options(future.globals.maxSize = 6 * 1024^3)
+options(future.globals.maxSize = 6 * 1024^3, shiny.maxRequestSize = 8 * 1024^3)
 
 # Helper function to track time of the run---------------------------------------
 format_elapsed <- function(start_time, end_time = Sys.time()) {
@@ -60,6 +64,262 @@ rename_rnaseh_cols <- function(df) {
   nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
   names(df) <- make.unique(nm2, sep = " (dup) ")
   df
+}
+
+# helper function for vcf and bcf file input for patient design
+####$$$####
+normalize_chr_style <- function(x) {
+  x <- as.character(x)
+  x <- sub("^chr", "", x, ignore.case = TRUE)
+  ifelse(x %in% c("M", "MT"), "chrM", paste0("chr", x))
+}
+
+is_valid_region_string <- function(region) {
+  grepl("^[^:]+:\\d+-\\d+$", trimws(region))
+}
+
+parse_region_string <- function(region) {
+  region <- trimws(region)
+  m <- regexec("^([^:]+):(\\d+)-(\\d+)$", region)
+  hit <- regmatches(region, m)[[1]]
+  if (length(hit) != 4) {
+    stop("Region must have format chr:start-end")
+  }
+  list(
+    chr = hit[2],
+    start = as.integer(hit[3]),
+    end = as.integer(hit[4])
+  )
+}
+
+stage_patient_variant_files <- function(variant_input, index_input = NULL) {
+  req(variant_input)
+  
+  workdir <- tempfile("patient_variant_job_")
+  dir.create(workdir, recursive = TRUE)
+  
+  infile_name <- variant_input$name
+  infile_path <- variant_input$datapath
+  
+  if (grepl("\\.vcf\\.gz$", infile_name, ignore.case = TRUE)) {
+    local_variant <- file.path(workdir, "input.vcf.gz")
+    variant_type <- "vcf.gz"
+  } else if (grepl("\\.bcf$", infile_name, ignore.case = TRUE)) {
+    local_variant <- file.path(workdir, "input.bcf")
+    variant_type <- "bcf"
+  } else if (grepl("\\.vcf$", infile_name, ignore.case = TRUE)) {
+    local_variant <- file.path(workdir, "input.vcf")
+    variant_type <- "vcf"
+  } else {
+    stop("Unsupported variant file type. Please upload .bcf, .vcf, or .vcf.gz")
+  }
+  
+  ok <- file.copy(infile_path, local_variant, overwrite = TRUE)
+  if (!ok) stop("Failed to stage uploaded variant file.")
+  
+  local_index <- NULL
+  
+  if (!is.null(index_input) && !is.null(index_input$datapath) && nzchar(index_input$datapath)) {
+    idx_name <- index_input$name
+    
+    if (grepl("\\.tbi$", idx_name, ignore.case = TRUE)) {
+      local_index <- paste0(local_variant, ".tbi")
+    } else if (grepl("\\.csi$", idx_name, ignore.case = TRUE)) {
+      local_index <- paste0(local_variant, ".csi")
+    } else {
+      stop("Index file must be .tbi or .csi")
+    }
+    
+    ok_idx <- file.copy(index_input$datapath, local_index, overwrite = TRUE)
+    if (!ok_idx) stop("Failed to stage uploaded index file.")
+  }
+  
+  list(
+    workdir = workdir,
+    variant_path = local_variant,
+    index_path = local_index,
+    variant_type = variant_type,
+    is_indexed = !is.null(local_index)
+  )
+}
+
+read_patient_variants_bcftools <- function(variant_path, region_string, is_indexed = FALSE, bcftools = "bcftools") {
+  bcftools_path <- Sys.which(bcftools)
+  if (!nzchar(bcftools_path)) {
+    stop("bcftools not found on PATH")
+  }
+  
+  # Use indexed jump for indexed inputs, streaming target filter otherwise
+  region_flag <- if (isTRUE(is_indexed)) "-r" else "-t"
+  
+  fmt <- "%CHROM\\t%POS\\t%REF\\t%ALT\\n"
+  args <- c(
+    "query",
+    region_flag, region_string,
+    "-f", fmt,
+    variant_path
+  )
+  
+  out <- system2(
+    command = bcftools_path,
+    args = args,
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  
+  if (length(out) == 0) {
+    return(tibble(
+      chr = character(),
+      pos = integer(),
+      ref = character(),
+      alt = character()
+    ))
+  }
+  
+  df <- read.delim(
+    text = paste(out, collapse = "\n"),
+    header = FALSE,
+    sep = "\t",
+    stringsAsFactors = FALSE,
+    col.names = c("chr", "pos", "ref", "alt")
+  )
+  
+  df <- as_tibble(df) %>%
+    mutate(
+      chr = normalize_chr_style(chr),
+      pos = as.integer(pos),
+      ref = as.character(ref),
+      alt = as.character(alt)
+    ) %>%
+    filter(
+      !is.na(pos),
+      !grepl(",", alt),      # keep simple ALT only
+      nchar(ref) == 1,
+      nchar(alt) == 1
+    )
+  
+  df
+}
+
+filter_snvs_to_gene <- function(snvs_raw, gene_chr, gene_start, gene_end) {
+  snvs_raw %>%
+    filter(
+      chr == normalize_chr_style(gene_chr),
+      pos >= gene_start,
+      pos <= gene_end
+    ) %>%
+    distinct(chr, pos, ref, alt, .keep_all = TRUE)
+}
+
+make_patient_window <- function(gene_chr, gene_start, gene_end, snvs, flank = 0L, strand = "+") {
+  flank <- as.integer(flank)
+  if (nrow(snvs) == 0) {
+    start_pos <- max(1L, gene_start - flank)
+    end_pos   <- gene_end + flank
+  } else {
+    start_pos <- max(1L, min(snvs$pos) - flank)
+    end_pos   <- max(snvs$pos) + flank
+  }
+  
+  GenomicRanges::GRanges(
+    seqnames = normalize_chr_style(gene_chr),
+    ranges = IRanges::IRanges(start = start_pos, end = end_pos),
+    strand = strand
+  )
+}
+
+apply_snvs_to_window <- function(ref_seq, window_start, snvs) {
+  seq_chars <- strsplit(as.character(ref_seq), "")[[1]]
+  
+  if (nrow(snvs) > 0) {
+    for (i in seq_len(nrow(snvs))) {
+      rel_pos <- snvs$pos[i] - window_start + 1L
+      if (rel_pos >= 1L && rel_pos <= length(seq_chars)) {
+        seq_chars[rel_pos] <- snvs$alt[i]
+      }
+    }
+  }
+  
+  DNAString(paste(seq_chars, collapse = ""))
+}
+
+annotate_patient_snv_overlap <- function(target_annotation_patient, snvs_gene) {
+  if (nrow(snvs_gene) == 0) {
+    target_annotation_patient$patient_snv_count <- 0L
+    target_annotation_patient$overlaps_patient_snv <- FALSE
+    target_annotation_patient$distance_to_nearest_snv <- NA_integer_
+    return(target_annotation_patient)
+  }
+  
+  snv_pos <- snvs_gene$pos
+  
+  target_annotation_patient$patient_snv_count <- vapply(
+    seq_len(nrow(target_annotation_patient)),
+    function(i) {
+      sum(
+        snv_pos >= target_annotation_patient$chr_start[i] &
+          snv_pos <= target_annotation_patient$chr_end[i]
+      )
+    },
+    integer(1)
+  )
+  
+  target_annotation_patient$overlaps_patient_snv <-
+    target_annotation_patient$patient_snv_count > 0
+  
+  target_annotation_patient$distance_to_nearest_snv <- vapply(
+    seq_len(nrow(target_annotation_patient)),
+    function(i) {
+      min(abs(snv_pos - target_annotation_patient$chr_start[i]),
+          abs(snv_pos - target_annotation_patient$chr_end[i]))
+    },
+    integer(1)
+  )
+  
+  target_annotation_patient
+}
+####$$$####
+
+# compute neurotox here for both tabs
+# Make the tox score function
+
+calculate_acute_neurotox <- function(xx) {
+  # make sure input is in character format
+  xx <- as.character(xx)
+  
+  # count the number of each nucleotide
+  lf <- function(x) {
+    x <- tolower(x)
+    x <- strsplit(x, "")[[1]]
+    x <- table(factor(x, levels = c("a", "c", "t", "g")))
+    return(x)
+  }
+  cnt_nt <- as.data.frame(t(sapply(xx, lf)))
+  # count number of nucleotides from the 3'-end untill it finds the first g
+  gfree3 <- function(x) {
+    x <- tolower(x)
+    x <- strsplit(x, "")[[1]]
+    tfg <- x == "g"
+    if (sum(tfg) == 0) {
+      l3 <- NA
+    } else {
+      posg <- c(1:length(x))[tfg]
+      l3 <- length(x) - max(posg)
+    }
+    return(l3)
+  }
+  cnt_gfree3 <- sapply(xx, gfree3)
+  cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
+  cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
+  ## Calculate final score based on trained parameters and return result
+  calc_out <- round(
+    136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
+      4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
+      cnt_gfree3,
+    1
+  )
+  
+  return(as.numeric(calc_out))
 }
 
 #-------------------------------------------------------------------------------
@@ -352,6 +612,24 @@ function(input, output, session) {
     )
   })
   
+  ######$$$########
+  observe({
+    updateSelectizeInput(
+      session,
+      inputId  = "ensemble_id_input_patient",
+      choices  = gene_choices_df,
+      selected = "ENSG00000174775",
+      server   = TRUE,
+      options  = list(
+        valueField  = "value",
+        labelField  = "label",
+        searchField = c("label", "symbol", "ensembl"),
+        placeholder = "Type gene symbol or Ensembl ID"
+      )
+    )
+  })
+  ######$$$########
+  
   session$onFlushed(function() {
     shinyjs::hide("app_startup_loading")
     
@@ -446,6 +724,15 @@ function(input, output, session) {
   perf_range <- rangeFilterServer("perfect_hits", 0, 200, fixed = "left")
   mm_range   <- rangeFilterServer("mismatch_hits",0, 500, fixed = "left")
   
+  ###$$$####
+  tox_range_patient <- rangeFilterServer("tox_score_patient",    0, 136, fixed = "right")
+  gc_range_patient  <- rangeFilterServer("gc_content_patient",   0, 100, fixed = "none")
+  pm_range_patient  <- rangeFilterServer("pm_freq_patient",      0, 1,   fixed = "left")
+  acc_range_patient <- rangeFilterServer("accessibility_patient",0, 1,   fixed = "none")
+  perf_range_patient <- rangeFilterServer("perfect_hits_patient", 0, 200, fixed = "left")
+  mm_range_patient   <- rangeFilterServer("mismatch_hits_patient",0, 500, fixed = "left")
+  ###$$$###
+  
   # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
   observeEvent(input$run_button, {
@@ -478,47 +765,48 @@ function(input, output, session) {
       }
       
       # ----------------------------------- Functions ------------------------------
-      # Make the tox score function
-      
-      calculate_acute_neurotox <- function(xx) {
-        # make sure input is in character format
-        xx <- as.character(xx)
-        
-        # count the number of each nucleotide
-        lf <- function(x) {
-          x <- tolower(x)
-          x <- strsplit(x, "")[[1]]
-          x <- table(factor(x, levels = c("a", "c", "t", "g")))
-          return(x)
-        }
-        cnt_nt <- as.data.frame(t(sapply(xx, lf)))
-        # count number of nucleotides from the 3'-end untill it finds the first g
-        gfree3 <- function(x) {
-          x <- tolower(x)
-          x <- strsplit(x, "")[[1]]
-          tfg <- x == "g"
-          if (sum(tfg) == 0) {
-            l3 <- NA
-          } else {
-            posg <- c(1:length(x))[tfg]
-            l3 <- length(x) - max(posg)
-          }
-          return(l3)
-        }
-        cnt_gfree3 <- sapply(xx, gfree3)
-        cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
-        cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
-        ## Calculate final score based on trained parameters and return result
-        calc_out <- round(
-          136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
-            4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
-            cnt_gfree3,
-          1
-        )
-        
-        return(as.numeric(calc_out))
-      }
-      
+  ###########&*#############
+          # # Make the tox score function
+      # 
+      # calculate_acute_neurotox <- function(xx) {
+      #   # make sure input is in character format
+      #   xx <- as.character(xx)
+      #   
+      #   # count the number of each nucleotide
+      #   lf <- function(x) {
+      #     x <- tolower(x)
+      #     x <- strsplit(x, "")[[1]]
+      #     x <- table(factor(x, levels = c("a", "c", "t", "g")))
+      #     return(x)
+      #   }
+      #   cnt_nt <- as.data.frame(t(sapply(xx, lf)))
+      #   # count number of nucleotides from the 3'-end untill it finds the first g
+      #   gfree3 <- function(x) {
+      #     x <- tolower(x)
+      #     x <- strsplit(x, "")[[1]]
+      #     tfg <- x == "g"
+      #     if (sum(tfg) == 0) {
+      #       l3 <- NA
+      #     } else {
+      #       posg <- c(1:length(x))[tfg]
+      #       l3 <- length(x) - max(posg)
+      #     }
+      #     return(l3)
+      #   }
+      #   cnt_gfree3 <- sapply(xx, gfree3)
+      #   cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
+      #   cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
+      #   ## Calculate final score based on trained parameters and return result
+      #   calc_out <- round(
+      #     136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
+      #       4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
+      #       cnt_gfree3,
+      #     1
+      #   )
+      #   
+      #   return(as.numeric(calc_out))
+      # }
+      ##########&*###############
       
       if (input$linux_input == TRUE) {
         # 2.5.1 Predict accessibility for an RNA target
@@ -1507,20 +1795,6 @@ function(input, output, session) {
       current_offtargets <- reactiveVal(NULL)
       cached_results <- reactiveVal(list())
       
-      # This warning output is displayed when no results are obtained from GGGenome.
-      #####&*##############
-      # output$gggenome_status <- renderUI({
-      #   if (is.null(summary_server)) {
-      #     div(
-      #       style = "color:red; font-size:16px; font-weight:bold; margin-bottom:10px;",
-      #       "GGGenome is currently unavailable. Off-target features are disabled."
-      #     )
-      #   } else {
-      #     NULL
-      #   }
-      # })
-      #######&*#################
-      
       # This function only runs when the application is running on Linux. 
       # It calculates the accessibility of off-targets with a distance of less than 2.
       # The 80-nt snippet is used in the RNAplfold_R function. 
@@ -2111,7 +2385,7 @@ function(input, output, session) {
             DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
           })
           
-          updateTabsetPanel(session, "tabs_main", selected = "RNase H cleavage results")
+          updateTabsetPanel(session, "tabs_main_general", selected = "RNase H cleavage results")
           
           # Off-target functionality
           if (!is.null(summary_server)) {
@@ -2269,97 +2543,213 @@ function(input, output, session) {
   ###############################################################
   ###############################################################
   
-  # observeEvent(input$run_patient_button, {
-  #   
-  #   req(input$ensemble_id_input_patient)
-  #   req(input$patient_variant_file)
-  #   
-  #   withProgress(message = "Running patient-specific analysis...", value = 0, {
-  #     
-  #     txdb_hsa <- loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
-  #     gdb_hsa <- genes(txdb_hsa)
-  #     seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
-  #     
-  #     ensembl_ID <- input$ensemble_id_input_patient
-  #     target_ranges <- gdb_hsa[names(gdb_hsa) == ensembl_ID]
-  #     
-  #     req(length(target_ranges) == 1)
-  #     
-  #     gene_chr    <- as.character(seqnames(target_ranges))
-  #     gene_start  <- start(target_ranges)
-  #     gene_end    <- end(target_ranges)
-  #     gene_strand <- as.character(strand(target_ranges))
-  #     
-  #     snvs_raw <- read_patient_snvs(input$patient_variant_file$datapath)
-  #     snvs_gene <- filter_snvs_to_gene(snvs_raw, gene_chr, gene_start, gene_end)
-  #     
-  #     validate(
-  #       need(nrow(snvs_gene) > 0, "No patient SNVs fall within the selected gene.")
-  #     )
-  #     
-  #     flank <- input$patient_flank
-  #     window_gr <- make_patient_window(
-  #       gene_chr = gene_chr,
-  #       gene_start = gene_start,
-  #       gene_end = gene_end,
-  #       snvs = snvs_gene,
-  #       flank = flank,
-  #       strand = gene_strand
-  #     )
-  #     
-  #     ref_window <- getSeq(Hsapiens, window_gr)
-  #     patient_window <- apply_snvs_to_window(
-  #       ref_seq = ref_window,
-  #       window_start = start(window_gr),
-  #       snvs = snvs_gene
-  #     )
-  #     
-  #     RNA_target_patient <- patient_window
-  #     
-  #     l <- width(RNA_target_patient)
-  #     oligo_lengths <- input$patient_oligo_length_range[1]:input$patient_oligo_length_range[2]
-  #     
-  #     target_annotation <- lapply(oligo_lengths, function(i) {
-  #       tibble(start = 1:(l - i + 1), length = i)
-  #     }) %>%
-  #       bind_rows() %>%
-  #       mutate(end = start + length - 1)
-  #     
-  #     target_regions <- DNAStringSet(
-  #       RNA_target_patient[[1]],
-  #       start = target_annotation$start,
-  #       width = target_annotation$length
-  #     )
-  #     
-  #     names(target_regions) <- as.character(target_regions)
-  #     target_annotation$name <- names(target_regions)
-  #     
-  #     nucleobase_seq <- reverseComplement(target_regions)
-  #     target_annotation$oligo_seq <- as.character(nucleobase_seq)
-  #     
-  #     if (gene_strand == "+") {
-  #       target_annotation$chr_start <- start(window_gr) + target_annotation$start - 1
-  #       target_annotation$chr_end   <- start(window_gr) + target_annotation$end - 1
-  #     } else {
-  #       target_annotation$chr_start <- end(window_gr) - target_annotation$end + 1
-  #       target_annotation$chr_end   <- end(window_gr) - target_annotation$start + 1
-  #     }
-  #     
-  #     target_annotation <- annotate_patient_snv_overlap(target_annotation, snvs_gene)
-  #     
-  #     target_annotation$tox_score <- calculate_acute_neurotox(target_annotation$oligo_seq)
-  #     
-  #     oligo_dna <- DNAStringSet(target_annotation$oligo_seq)
-  #     gc_counts <- letterFrequency(oligo_dna, c("G", "C"))
-  #     oligo_len <- width(oligo_dna)
-  #     target_annotation$gc_content <- rowSums(gc_counts) / oligo_len * 100
-  #     
-  #     output$patient_results <- renderDT({
-  #       datatable(target_annotation, rownames = FALSE)
-  #     })
-  #   })
-  # })
-  # 
+  ######$$$#######
+  observeEvent(input$run_button_patient, {
+    
+    req(input$ensemble_id_input_patient)
+    req(input$patient_variant_file)
+    
+    withProgress(message = "Preparing patient-specific input...", value = 0, {
+      
+      incProgress(0.15, detail = "Loading gene annotation")
+  
+      # load gene annotation database
+      txdb_hsa <- tryCatch({
+        loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+      }, error = function(e) {
+        loadDb("../txdb_hsa_biomart.db")
+      })
+      
+      gdb_hsa <- genes(txdb_hsa)
+      seqlevelsStyle(gdb_hsa) <- seqlevelsStyle(Hsapiens)
+      
+      common_chrs <- intersect(seqlevels(gdb_hsa), seqlevels(Hsapiens))
+      gdb_hsa <- keepSeqlevels(gdb_hsa, common_chrs, pruning.mode = "coarse")
+      
+      # extract chromosome region from gene
+      ensembl_ID <- input$ensemble_id_input_patient
+      target_ranges <- gdb_hsa[names(gdb_hsa) == ensembl_ID]
+      
+      if (length(target_ranges) != 1) {
+        showNotification(
+          "Could not uniquely identify selected gene.",
+          type = "error",
+          duration = NULL
+        )
+        return()
+      }
+      
+      gene_chr    <- normalize_chr_style(as.character(seqnames(target_ranges)))
+      gene_start  <- start(target_ranges)
+      gene_end    <- end(target_ranges)
+      gene_strand <- as.character(strand(target_ranges))
+      
+      incProgress(0.45, detail = "Checking uploaded files")
+      
+      # variant file and index file are copied into a temp dir
+      
+      staged <- tryCatch(
+        stage_patient_variant_files(
+          variant_input = input$patient_variant_file,
+          index_input   = input$patient_variant_index_file
+        ),
+        error = function(e) {
+          showNotification(
+            paste("File preparation failed:", conditionMessage(e)),
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+      )
+      
+      if (is.null(staged)) {
+        return()
+      }
+      
+      flank <- as.integer(input$patient_flank)
+      
+      # detect chromsome region
+      region_string <- trimws(if (is.null(input$patient_region_input)) "" else input$patient_region_input)
+      
+      # validate chromosme region format
+      if (nzchar(region_string)) {
+        if (!is_valid_region_string(region_string)) {
+          showNotification(
+            "Region must have format chr:start-end",
+            type = "error",
+            duration = NULL
+          )
+          return()
+        }
+      } else {
+        # no input means the script will take the gene chromsome region by default
+        region_string <- paste0(
+          gene_chr, ":",
+          max(1L, gene_start - flank), "-",
+          gene_end + flank
+        )
+      }
+      
+      incProgress(0.75, detail = "Rendering upload summary")
+      
+      # generate a summary table for now, this can be replaced once this entire input process works
+      patient_summary_df <- tibble(
+        Metric = c(
+          "Selected gene",
+          "Gene chromosome",
+          "Gene start",
+          "Gene end",
+          "Gene strand",
+          "Variant file name",
+          "Variant file type",
+          "Variant file staged path",
+          "Index file detected",
+          "Index staged path",
+          "Indexed input",
+          "Region to use later",
+          "Flank"
+        ),
+        Value = c(
+          ensembl_ID,
+          gene_chr,
+          gene_start,
+          gene_end,
+          gene_strand,
+          input$patient_variant_file$name,
+          staged$variant_type,
+          staged$variant_path,
+          ifelse(is.null(staged$index_path), "no", "yes"),
+          ifelse(is.null(staged$index_path), "", staged$index_path),
+          ifelse(staged$is_indexed, "yes", "no"),
+          region_string,
+          flank
+        )
+      )
+      
+      
+      # render the data tables
+      output$patient_summary <- renderTable({
+        patient_summary_df
+      }, striped = TRUE, bordered = TRUE, spacing = "s")
+      
+      
+      # this output table is jsut to make sure things worked, can also be removed later on
+      output$unfiltered_results_table_patient <- renderDT({
+        datatable(
+          tibble(
+            step = c(
+              "Gene selected",
+              "Variant file uploaded",
+              "Variant file staged",
+              "Region resolved"
+            ),
+            status = c(
+              "yes",
+              "yes",
+              "yes",
+              "yes"
+            )
+          ),
+          rownames = FALSE,
+          options = list(dom = "t", ordering = FALSE),
+          class = "compact stripe"
+        )
+      })
+      
+      
+      # alos just a test table
+      output$results1_patient <- renderDT({
+        datatable(
+          tibble(
+            check = c(
+              "Gene",
+              "Variant file",
+              "Index",
+              "Region"
+            ),
+            value = c(
+              ensembl_ID,
+              input$patient_variant_file$name,
+              ifelse(is.null(staged$index_path), "none", basename(staged$index_path)),
+              region_string
+            )
+          ),
+          rownames = FALSE,
+          options = list(dom = "t", pageLength = 10)
+        )
+      })
+      
+      
+      # download buttons for output tables
+      output$Download_unfiltered_patient <- downloadHandler(
+        filename = function() {
+          paste0("patient_input_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+        },
+        content = function(file) {
+          write.csv(patient_summary_df, file, row.names = FALSE)
+        }
+      )
+      
+      output$Download_filtered_patient <- downloadHandler(
+        filename = function() {
+          paste0("patient_input_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+        },
+        content = function(file) {
+          write.csv(patient_summary_df, file, row.names = FALSE)
+        }
+      )
+      
+      incProgress(1, detail = "Done")
+      
+      showNotification(
+        "Patient input files were uploaded and staged successfully.",
+        type = "message",
+        duration = 8
+      )
+    })
+  })
+#######$$$############
   
   
 }

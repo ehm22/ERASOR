@@ -6,11 +6,11 @@ library(shinythemes)
 ### for sliders with numeric input boxes
 
 rangeFilterUI <- function(
-    id, 
-    label = NULL, 
-    min, 
-    max, 
-    value, 
+    id,
+    label = NULL,
+    min,
+    max,
+    value,
     step = 1,
     fixed = c("none", "left", "right"),
     label_from = "From:",
@@ -58,11 +58,9 @@ rangeFilterUI <- function(
   )
 }
 
-###
-
-
 ui <- fluidPage(
   useShinyjs(),
+  
   div(
     id = "app_startup_loading",
     div(
@@ -71,686 +69,802 @@ ui <- fluidPage(
       span(id = "loading_dots", ".")
     )
   ),
+  
   theme = shinythemes::shinytheme("flatly"),
-  tags$head(tags$style(
-    HTML(
-      
-            "
-      #app_startup_loading {
-        position: fixed;
-        inset: 0;
-        background: rgba(255, 255, 255, 0.35);
-        z-index: 99999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      
-      #app_startup_loading_box {
-        min-width: 320px;
-        max-width: 500px;
-        padding: 15px 20px;
-        background: #d9edf7;
-        border: 1px solid #bce8f1;
-        border-radius: 4px;
-        color: #31708f;
-        font-size: 18px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        text-align: center;
-      }
-      #shiny-notification-panel {
-        position: fixed;
-        top: calc(50%);
-        left: calc(50%);
-        width: 500px;
-        height: 200px;
-        transform: translate(-50%, -50%);
-        z-index: 9999;
-      }
-      
-      .navbar-brand {
-        display: flex !important;
-        align-items: center !important;
-        height: 60px !important;
-      }
-      
-       .no-minor-ticks .irs-grid-pol.small {
-         display: none;
-      }
-      
-      /* RIGHT-FIXED SLIDER: color should be value -> max (right side) WITHOUT mirroring */
+  
+  tags$head(
+    tags$style(
+      HTML("
+        #app_startup_loading {
+          position: fixed;
+          inset: 0;
+          background: rgba(255, 255, 255, 0.35);
+          z-index: 99999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
 
-      /* Make the entire track blue */
-      .slider-right-fixed .irs-line {
-        background: #428bca !important;   /* blue */
-        border-color: #428bca !important;
-      }
-      
-      /* Make the default highlight (left part) look like the unhighlighted track */
-      .slider-right-fixed .irs-bar {
-        background: #e5e5e5 !important;   /* gray */
-        border-color: #e5e5e5 !important;
-      }
-      
-      /* Optional: hide the little edge nub */
-      .slider-right-fixed .irs-bar-edge {
-        display: none !important;
-      }
-      "
+        #app_startup_loading_box {
+          min-width: 320px;
+          max-width: 500px;
+          padding: 15px 20px;
+          background: #d9edf7;
+          border: 1px solid #bce8f1;
+          border-radius: 4px;
+          color: #31708f;
+          font-size: 18px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+          text-align: center;
+        }
+
+        #shiny-notification-panel {
+          position: fixed;
+          top: calc(50%);
+          left: calc(50%);
+          width: 500px;
+          height: 200px;
+          transform: translate(-50%, -50%);
+          z-index: 9999;
+        }
+
+        .navbar-brand {
+          display: flex !important;
+          align-items: center !important;
+          height: 60px !important;
+        }
+
+        .no-minor-ticks .irs-grid-pol.small {
+          display: none;
+        }
+
+        .slider-right-fixed .irs-line {
+          background: #428bca !important;
+          border-color: #428bca !important;
+        }
+
+        .slider-right-fixed .irs-bar {
+          background: #e5e5e5 !important;
+          border-color: #e5e5e5 !important;
+        }
+
+        .slider-right-fixed .irs-bar-edge {
+          display: none !important;
+        }
+
+        .mode-tab {
+          margin-top: 10px;
+        }
+      ")
     )
-  )),
+  ),
+  
   tags$nav(
     class = "navbar navbar-default",
     style = "margin-bottom: 5px;",
-    tags$div(class = "container-fluid", tags$div(
-      class = "navbar-header",
-      tags$span(class = "navbar-brand", style = "font-weight: bold; font-size: 30px;", HTML("ER<u>ASO</u>R"))
-    ))
-  ),
-  sidebarLayout(
-    sidebarPanel(fluidRow(
-      column(
-        12,
-        selectizeInput(
-          "ensemble_id_input",
-          label = tagList(
-            "Enter Gene or Ensembl ID (ENSG…):  ",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
-              ),
-              title = "Please enter a gene, the script does not support transcript inputs.",
-              `data-placement` = "right",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
-            )
-          ),
-          choices  = NULL,     
-          multiple = FALSE,
-          options  = list(
-            placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
-            maxOptions  = 50,
-            create      = TRUE
-          )
-        ),
-        checkboxInput(
-          "single_aso_input",
-          label = "Get characteristics for specific ASOs",
-          value = FALSE
-        ),
-        
-        conditionalPanel(
-          condition = "input.single_aso_input == true",
-          tagList(
-            textAreaInput(
-              "aso_seq_input",
-              label = NULL,
-              value = "",
-              placeholder = "Enter ASO sequences separated by comma, point or white space.",
-              rows = 5
-            ),
-            tags$small(
-              "Only sequences containing A, C, G, and T are recognized. "
-            ),
-            br(),
-            strong("Detected ASO sequences:"),
-            verbatimTextOutput("parsed_asos")
-          )
+    tags$div(
+      class = "container-fluid",
+      tags$div(
+        class = "navbar-header",
+        tags$span(
+          class = "navbar-brand",
+          style = "font-weight: bold; font-size: 30px;",
+          HTML("ER<u>ASO</u>R")
         )
-        ,
-        checkboxInput(
-          "polymorphism_input",
-          label = tagList(
-            "Polymorphism analysis ",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
-              ),
-              title = "This feature identifies single nucleotide polymorphisms (SNPs) for the selected Ensembl gene. SNPs are genetic variations in which one nucleotide has changed, for example, a C to a T.",
-              `data-placement` = "right",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
-            )
-          ),
-          value = TRUE
-        ),
-        checkboxInput(
-          "ASO_ending_G",
-          label = tagList(
-            "Filter out ASOs ending in G ",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
-              ),
-              title = "Removes ASO sequences ending with G. These sequences have a higher chance to induce toxicity. ",
-              `data-placement` = "right",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
-            )
-          ),
-          value = TRUE
-        ),
-        checkboxInput(
-          "Conserved_input",
-          label = tagList(
-            "Conserved in Mus musculus ",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
-              ),
-              title = "This feature identifies conserved regions and orthologous genes in the mouse genome. Enabling this filter will show ASOs which could be used in mouse models.",
-              `data-placement` = "right",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
-            )
-          ),
-          value = FALSE
-        ),
-        checkboxInput(
-          "linux_input",
-          label = tagList(
-            "Accessibility calculation (Linux-OS only)",
-            tags$span(
-              tags$img(
-                src = "questionmark.png",
-                height = "20px",
-                style = "margin-bottom: 3px;"
-              ),
-              title = "Enable this setting only when running on a Linux operating system. Some features, such as the ViennaRNA analysis, require Linux. Enabling this option on other systems, such as Windows or Mac, may cause the program to fail.",
-              `data-placement` = "top",
-              `data-toggle` = "tooltip",
-              style = "cursor: pointer;"
-            )
-          ),
-          value = TRUE
-        ),
-        div(
-          class = "no-minor-ticks", 
-            sliderInput(
-              "oligo_length_range",
-              label = tagList(
-                "ASO length: ",
-                tags$span(
-                  tags$img(
-                    src = "questionmark.png",
-                    height = "20px",
-                    style = "margin-bottom: 3px;"
+      )
+    )
+  ),
+  
+  tabsetPanel(
+    id = "mode_tabs",
+    type = "tabs",
+    
+    ## =========================================================
+    ## GENERAL KNOCKDOWN MODE
+    ## =========================================================
+    tabPanel(
+      "General knockdown",
+      div(
+        class = "mode-tab",
+        sidebarLayout(
+          sidebarPanel(
+            width = 3,
+            fluidRow(
+              column(
+                12,
+                
+                selectizeInput(
+                  "ensemble_id_input",
+                  label = tagList(
+                    "Enter Gene or Ensembl ID (ENSG…):  ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Please enter a gene, the script does not support transcript inputs.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
                   ),
-                  title = "Longer oligo lengths and a wider range of different lengths leads to longer runtime, we recommend a range of 3 lengths",
-                  `data-placement` = "right",
-                  `data-toggle` = "tooltip",
-                  style = "cursor: pointer;"
-                )
-              ),
-              min = 15,
-              max = 25,
-              value = c(18, 20)
-            )
-          ),
-        div(
-          id = "filters",
-        fluidRow(
-          column(
-            12,
-            
-            #### GC content filter ####
-            h5(tagList(
-              HTML("<b>GC content (%) </b>"),
-            )),
-            fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "gc_content",   # <-- module ID, matches server
-                  label = NULL,
-                  min   = 0,
-                  max   = 100,
-                  value = c(40, 60),      # default GC% window, adjust as you like
-                  step  = 1,
-                  fixed = "none"
-                )
-              ),
-              column(
-                3,
-                checkboxInput("gc_input", "Enable", value = TRUE)
-              )
-            ),
-            ####
-            #### Tox score filter ####
-            h5(tagList(
-              HTML("<b>Acute neurotoxicity score (Hagedoorn) </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
-                `data-toggle` = "tooltip",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "tox_score",    
-                  label = NULL,           
-                  min   = 0,              
-                  max   = 136,
-                  value = 60,     # default: 60
-                  step  = 1,
-                  fixed = "right",
-                  label_right = "Minimum Tox. Score"
-                )
-              ),
-              column(
-                3,
-                checkboxInput("tox_input", "Enable", value = TRUE)
-              )
-            ),
-            ####
-            h5(tagList(
-              HTML("<b>Off-targets with perfect matches</b> "),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
-                ),
-                title = "Number of off-targets, which are perfect complements to the ASO. ",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              div(
-                class = "no-minor-ticks", 
-                column(
-                  9,
-                  rangeFilterUI(
-                    id    = "perfect_hits",
-                    label = NULL,
-                    min   = 0,
-                    max   = 5,        # pick a sensible max for your runs
-                    value = 1,    # default: allow <= 1 perfect match
-                    step  = 1,
-                    fixed = "left",
-                    label_left = "Maximum number of perfect matches"
+                  choices  = NULL,
+                  multiple = FALSE,
+                  options  = list(
+                    placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
+                    maxOptions  = 50,
+                    create      = TRUE
                   )
                 ),
-                column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
-              )
-            ),
-            
-            h5(tagList(
-              HTML("<b>Off-targets with 1 mismatch </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
+                
+                checkboxInput(
+                  "single_aso_input",
+                  label = "Get characteristics for specific ASOs",
+                  value = FALSE
                 ),
-                title = "Desired number of off-targets with 1 mismatch/indel. Greater ranges lead to longer runtimes.",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "mismatch_hits",
-                  label = NULL,
-                  min   = 0,
-                  max   = 50,         # choose based on expected results
-                  value = 10,    # default: allow <= 10 one-mismatch hits
-                  step  = 1,
-                  fixed = "left",
-                  label_left = "Maximum number of off-targets with 1 mismatch"
-                )
-              ),
-              column(3, checkboxInput("mismatch_input", "Enable", value = TRUE))
-            ),
-            #### PM filter ####
-            h5(tagList(
-              HTML("<b>Polymorphism frequency </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
+                
+                conditionalPanel(
+                  condition = "input.single_aso_input == true",
+                  tagList(
+                    textAreaInput(
+                      "aso_seq_input",
+                      label = NULL,
+                      value = "",
+                      placeholder = "Enter ASO sequences separated by comma, point or white space.",
+                      rows = 5
+                    ),
+                    tags$small(
+                      "Only sequences containing A, C, G, and T are recognized. "
+                    ),
+                    br(),
+                    strong("Detected ASO sequences:"),
+                    verbatimTextOutput("parsed_asos")
+                  )
                 ),
-                title = "This quality control score estimates the probability that a polymorphism (SNP) is present in the target mRNA sequences. Lower values are preferred.",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "pm_freq",
-                  label = NULL,
-                  min   = 0,
-                  max   = 1,
-                  value = 0.05,
-                  step  = 0.01,
-                  fixed = "left"
-                )
-              ),
-              column(3, checkboxInput("Poly_input", "Enable", value = TRUE))
-            ),
-            ####
-            #### accessibility filter ####
-            h5(tagList(
-              HTML("<b>Accessibility </b>"),
-              tags$span(
-                tags$img(
-                  src = "questionmark.png",
-                  height = "20px",
-                  style = "margin-bottom: 3px;"
+                
+                checkboxInput(
+                  "polymorphism_input",
+                  label = tagList(
+                    "Polymorphism analysis ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "This feature identifies single nucleotide polymorphisms (SNPs) for the selected Ensembl gene. SNPs are genetic variations in which one nucleotide has changed, for example, a C to a T.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  value = TRUE
                 ),
-                title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs. ",
-                `data-toggle` = "tooltip",
-                `data-placement` = "right",
-                style = "cursor: pointer;"
-              )
-            )),
-            fluidRow(
-              column(
-                9,
-                rangeFilterUI(
-                  id    = "accessibility",
-                  label = NULL,
-                  min   = 0,
-                  max   = 1,            
-                  value = c(0, 0.000001),     
-                  step  = 0.000001,    
-                  fixed = "none"       
+                
+                checkboxInput(
+                  "ASO_ending_G",
+                  label = tagList(
+                    "Filter out ASOs ending in G ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Removes ASO sequences ending with G. These sequences have a higher chance to induce toxicity.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  value = TRUE
+                ),
+                
+                checkboxInput(
+                  "Conserved_input",
+                  label = tagList(
+                    "Conserved in Mus musculus ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "This feature identifies conserved regions and orthologous genes in the mouse genome. Enabling this filter will show ASOs which could be used in mouse models.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  value = FALSE
+                ),
+                
+                checkboxInput(
+                  "linux_input",
+                  label = tagList(
+                    "Accessibility calculation (Linux-OS only)",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Enable this setting only when running on a Linux operating system. Some features, such as the ViennaRNA analysis, require Linux. Enabling this option on other systems, such as Windows or Mac, may cause the program to fail.",
+                      `data-placement` = "top",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  value = TRUE
+                ),
+                
+                div(
+                  class = "no-minor-ticks",
+                  sliderInput(
+                    "oligo_length_range",
+                    label = tagList(
+                      "ASO length: ",
+                      tags$span(
+                        tags$img(
+                          src = "questionmark.png",
+                          height = "20px",
+                          style = "margin-bottom: 3px;"
+                        ),
+                        title = "Longer oligo lengths and a wider range of different lengths leads to longer runtime, we recommend a range of 3 lengths",
+                        `data-placement` = "right",
+                        `data-toggle` = "tooltip",
+                        style = "cursor: pointer;"
+                      )
+                    ),
+                    min = 15,
+                    max = 25,
+                    value = c(18, 20)
+                  )
+                ),
+                
+                div(
+                  id = "filters",
+                  fluidRow(
+                    column(
+                      12,
+                      
+                      h5(tagList(
+                        HTML("<b>GC content (%) </b>")
+                      )),
+                      fluidRow(
+                        column(
+                          9,
+                          rangeFilterUI(
+                            id    = "gc_content",
+                            label = NULL,
+                            min   = 0,
+                            max   = 100,
+                            value = c(40, 60),
+                            step  = 1,
+                            fixed = "none"
+                          )
+                        ),
+                        column(
+                          3,
+                          checkboxInput("gc_input", "Enable", value = TRUE)
+                        )
+                      ),
+                      
+                      h5(tagList(
+                        HTML("<b>Acute neurotoxicity score (Hagedoorn) </b>"),
+                        tags$span(
+                          tags$img(
+                            src = "questionmark.png",
+                            height = "20px",
+                            style = "margin-bottom: 3px;"
+                          ),
+                          title = "This quality control score estimates the potential toxicity of the complementary ASO targeting the mRNA sequence, providing insight into the safety risk of a chosen ASO. Higher values correspond to lower toxicity, which is favourable.",
+                          `data-toggle` = "tooltip",
+                          style = "cursor: pointer;"
+                        )
+                      )),
+                      fluidRow(
+                        column(
+                          9,
+                          rangeFilterUI(
+                            id    = "tox_score",
+                            label = NULL,
+                            min   = 0,
+                            max   = 136,
+                            value = 60,
+                            step  = 1,
+                            fixed = "right",
+                            label_right = "Minimum Tox. Score"
+                          )
+                        ),
+                        column(
+                          3,
+                          checkboxInput("tox_input", "Enable", value = TRUE)
+                        )
+                      ),
+                      
+                      h5(tagList(
+                        HTML("<b>Off-targets with perfect matches</b> "),
+                        tags$span(
+                          tags$img(
+                            src = "questionmark.png",
+                            height = "20px",
+                            style = "margin-bottom: 3px;"
+                          ),
+                          title = "Number of off-targets, which are perfect complements to the ASO.",
+                          `data-toggle` = "tooltip",
+                          `data-placement` = "right",
+                          style = "cursor: pointer;"
+                        )
+                      )),
+                      fluidRow(
+                        div(
+                          class = "no-minor-ticks",
+                          column(
+                            9,
+                            rangeFilterUI(
+                              id    = "perfect_hits",
+                              label = NULL,
+                              min   = 0,
+                              max   = 5,
+                              value = 1,
+                              step  = 1,
+                              fixed = "left",
+                              label_left = "Maximum number of perfect matches"
+                            )
+                          ),
+                          column(3, checkboxInput("perfect_input", "Enable", value = TRUE))
+                        )
+                      ),
+                      
+                      h5(tagList(
+                        HTML("<b>Off-targets with 1 mismatch </b>"),
+                        tags$span(
+                          tags$img(
+                            src = "questionmark.png",
+                            height = "20px",
+                            style = "margin-bottom: 3px;"
+                          ),
+                          title = "Desired number of off-targets with 1 mismatch/indel. Greater ranges lead to longer runtimes.",
+                          `data-toggle` = "tooltip",
+                          `data-placement` = "right",
+                          style = "cursor: pointer;"
+                        )
+                      )),
+                      fluidRow(
+                        column(
+                          9,
+                          rangeFilterUI(
+                            id    = "mismatch_hits",
+                            label = NULL,
+                            min   = 0,
+                            max   = 50,
+                            value = 10,
+                            step  = 1,
+                            fixed = "left",
+                            label_left = "Maximum number of off-targets with 1 mismatch"
+                          )
+                        ),
+                        column(3, checkboxInput("mismatch_input", "Enable", value = TRUE))
+                      ),
+                      
+                      h5(tagList(
+                        HTML("<b>Polymorphism frequency </b>"),
+                        tags$span(
+                          tags$img(
+                            src = "questionmark.png",
+                            height = "20px",
+                            style = "margin-bottom: 3px;"
+                          ),
+                          title = "This quality control score estimates the probability that a polymorphism (SNP) is present in the target mRNA sequences. Lower values are preferred.",
+                          `data-toggle` = "tooltip",
+                          `data-placement` = "right",
+                          style = "cursor: pointer;"
+                        )
+                      )),
+                      fluidRow(
+                        column(
+                          9,
+                          rangeFilterUI(
+                            id    = "pm_freq",
+                            label = NULL,
+                            min   = 0,
+                            max   = 1,
+                            value = 0.05,
+                            step  = 0.01,
+                            fixed = "left"
+                          )
+                        ),
+                        column(3, checkboxInput("Poly_input", "Enable", value = TRUE))
+                      ),
+                      
+                      h5(tagList(
+                        HTML("<b>Accessibility </b>"),
+                        tags$span(
+                          tags$img(
+                            src = "questionmark.png",
+                            height = "20px",
+                            style = "margin-bottom: 3px;"
+                          ),
+                          title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs.",
+                          `data-toggle` = "tooltip",
+                          `data-placement` = "right",
+                          style = "cursor: pointer;"
+                        )
+                      )),
+                      fluidRow(
+                        column(
+                          9,
+                          rangeFilterUI(
+                            id    = "accessibility",
+                            label = NULL,
+                            min   = 0,
+                            max   = 1,
+                            value = c(0, 0.000001),
+                            step  = 0.000001,
+                            fixed = "none"
+                          )
+                        ),
+                        column(3, checkboxInput("Accessibility_input", "Enable", value = TRUE))
+                      ),
+                      
+                      fluidRow(
+                        column(4, actionButton("run_button", "Run")),
+                        column(4, actionButton("reset_defaults", "Set to default"))
+                      )
+                    )
+                  )
                 )
+              )
+            )
+          ),
+          
+          mainPanel(
+            width = 9,
+            tabsetPanel(
+              id = "tabs_main_general",
+              
+              tabPanel(
+                "Sequence results",
+                div(
+                  "This is the main page of the application, which displays the primary output table. The table lists all potential target mRNA sequences for the provided Ensembl ID and includes information to help the user select suitable ASO targets. After selecting an ASO, the application automatically redirects to the RNase H tab, and the chosen ASO becomes available for further analysis on all other tabs.",
+                  style = "margin-top: 20px; font-size: 18px;"
+                ),
+                hr(),
+                fluidRow(
+                  column(
+                    6,
+                    p("This table shows the number of ASOs that did not meet filtering criterea."),
+                    DTOutput("unfiltered_results_table")
+                  ),
+                  column(
+                    2,
+                    p("Download unfiltered results without off-target search here: "),
+                    downloadButton("Download_unfiltered", "Download Unfiltered Results")
+                  )
+                ),
+                hr(),
+                fluidRow(
+                  column(
+                    3,
+                    actionButton("toggle_cols", "Extended data")
+                  )
+                ),
+                br(),
+                DT::dataTableOutput("results1"),
+                hr(),
+                downloadButton("Download_filtered", "Download Filtered Results")
               ),
-              column(3, checkboxInput("Accessibility_input", "Enable", value = TRUE))
-            ),
-            ####
-            fluidRow(
-              column(4, actionButton("run_button", "Run")),
-              # column(4, actionButton("cancel_run", "Cancel run", class = "btn-danger", style = "margin-left: -10px;")),
-              column(4, actionButton("reset_defaults", "Set to default"))
-            )),
+              
+              tabPanel(
+                "RNase H cleavage results",
+                div(
+                  "This page predicts the optimal binding site for RNase H on the chosen target mRNA sequence. It uses a matrix of dinucleotide values and a sliding window approach to evaluate all possible binding sites along the mRNA sequence. The script accounts for chemical modifications on the ASO’s 5’ and 3’ ends, which can affect possible binding sites. Each potential site is scored based on the average from the dinucleotide matrix, and the results are ranked to highlight the most promising locations for RNase H cleavage.",
+                  style = "margin-top: 20px; font-size: 18px;"
+                ),
+                hr(),
+                h3(textOutput("rnaseh_title")),
+                div(uiOutput("rnaseh_info"), style = "margin-bottom: 15px;"),
+                hr(),
+                
+                fluidRow(
+                  column(
+                    6,
+                    numericInput(
+                      "mod_5prime",
+                      label = tagList(
+                        "Amount of modified nucleotides at the 5' end  ",
+                        tags$span(
+                          tags$img(src = "questionmark.png", height = "20px"),
+                          title = "This setting adds modifications to the 5' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 2 modified nucleotides on the 3' end of the target mRNA is allowed.",
+                          `data-toggle` = "tooltip",
+                          style = "cursor: pointer;"
+                        )
+                      ),
+                      value = 5,
+                      min = 0,
+                      max = 10,
+                      width = "60%"
+                    )
+                  ),
+                  column(
+                    6,
+                    numericInput(
+                      "mod_3prime",
+                      label = tagList(
+                        "Amount of modified nucleotides at the 3' end  ",
+                        tags$span(
+                          tags$img(src = "questionmark.png", height = "20px"),
+                          title = "This setting adds modifications to the 3' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 4 modified nucleotides on the 5' end of the target mRNA is allowed.",
+                          `data-toggle` = "tooltip",
+                          style = "cursor: pointer;"
+                        )
+                      ),
+                      value = 5,
+                      min = 0,
+                      max = 10,
+                      width = "60%"
+                    )
+                  )
+                ),
+                actionButton("add_mods", "Apply end modifications", class = "btn-primary"),
+                hr(),
+                
+                downloadButton("download_rnaseh", "Download results", style = "margin-bottom: 15px;"),
+                dataTableOutput("rnaseh_results"),
+                hr(),
+                
+                h3("Visualised cleavage site: "),
+                uiOutput("cleavage_visual")
+              ),
+              
+              tabPanel(
+                "Off target results",
+                div(
+                  "This page displays the off-targets for the selected target mRNA sequence based on the allowed number of mismatches. For the complementary ASO sequence, it shows mismatches, deletions, insertions, protein name and additional information from GGGenome. The protein name is then given to Protein Atlas to retrieve the tissue expression data. This page also calculates the accessibility potential of each off-target.",
+                  style = "margin-top: 20px; font-size: 18px;"
+                ),
+                hr(),
+                uiOutput("gggenome_status"),
+                h3(textOutput("offtarget_title")),
+                textOutput("aso_seq"),
+                textOutput("numb_offtargets"),
+                hr(),
+                
+                fluidRow(
+                  column(
+                    6,
+                    selectInput(
+                      "user_mismatch",
+                      label = tagList(
+                        "Select number of mismatches allowed  ",
+                        tags$span(
+                          tags$img(src = "questionmark.png", height = "20px"),
+                          title = "This setting identifies off-target sequences according to the number of mismatches permitted in the target mRNA, with a default value of one mismatch. Allowing more mismatches results in more off-targets being detected but also increases the processing time.",
+                          `data-toggle` = "tooltip",
+                          style = "cursor: pointer;"
+                        )
+                      ),
+                      choices = list(
+                        "0" = 0,
+                        "1" = 1,
+                        "2" = 2,
+                        "3" = 3
+                      )
+                    ),
+                    actionButton("apply_mismatch", "Apply", class = "btn-primary")
+                  ),
+                  column(
+                    6,
+                    fluidRow("Run off-target tissue expression and OMIM disease search (may take some time)"),
+                    fluidRow(
+                      selectInput(
+                        "target_tissue",
+                        label = tagList(
+                          "Select target tissue  ",
+                          tags$span(
+                            tags$img(src = "questionmark.png", height = "20px"),
+                            title = "For each off-target, tissue-specific expression data is retrieved from the Protein Atlas. This data, combined with the off-target information, is then used to query OMIM for associated diseases. Currently, the analysis supports the brain, eyes, and liver, with additional tissues planned as further developments become available.",
+                            `data-toggle` = "tooltip",
+                            style = "cursor: pointer;"
+                          )
+                        ),
+                        choices = c(
+                          "Brain",
+                          "Eye",
+                          "Endrocrine tissue",
+                          "Respiratory system",
+                          "Proximal digestive tract",
+                          "Gastrointestinal tract",
+                          "Liver & galbladder",
+                          "Pancreas",
+                          "Kidney & urinary bladder",
+                          "Male tissues",
+                          "Female tissues",
+                          "Muscle tissues",
+                          "Connective & soft tissues",
+                          "Skin",
+                          "Bone marrow & lymphoid tissues"
+                        )
+                      ),
+                      actionButton("PAtlas_OMIM_search", "Run")
+                    )
+                  )
+                ),
+                hr(),
+                downloadButton("download_offtarget", "Download results", style = "margin-bottom: 15px;"),
+                DTOutput("offtarget_results")
+              )
+            )
           )
         )
       )
-    ),width = 3),
-    
-    # Updated main panel for RNase H script.
-    mainPanel(tabsetPanel(
-      id = "tabs_main",
-      tabPanel(
-        "Sequence results",
-        div(
-          "This is the main page of the application, which displays the primary output table. The table lists all potential target mRNA sequences for the provided Ensembl ID and includes information to help the user select suitable ASO targets. After selecting an ASO, the application automatically redirects to the RNase H tab, and the chosen ASO becomes available for further analysis on all other tabs.",
-          style = "margin-top: 20px; font-size: 18px;"
-        ),
-        hr(),
-        fluidRow(
-          column(6,
-                 p("This table shows the number of ASOs that did not meet filtering criterea."),
-                 DTOutput("unfiltered_results_table")
-                ),
-          column(2,
-                 p("Download unfiltered results without off-target search here: "),
-                 downloadButton("Download_unfiltered", "Download Unfiltered Results")
-               )),
-        hr(),
-        fluidRow(
-          column(
-            3,
-            actionButton("toggle_cols", "Extended data")
-          )
-        ),
-        br(),
-        DT::dataTableOutput('results1'),
-        hr(),
-        downloadButton("Download_filtered", "Download Filtered Results"),
-      ),
-      
-      tabPanel(
-        "RNase H cleavage results",
-        div(
-          "This page predicts the optimal binding site for RNase H on the chosen target mRNA sequence. It uses a matrix of dinucleotide values and a sliding window approach to evaluate all possible binding sites along the mRNA sequence. The script accounts for chemical modifications on the ASO’s 5’ and 3’ ends, which can affect possible binding sites. Each potential site is scored based on the average from the dinucleotide matrix, and the results are ranked to highlight the most promising locations for RNase H cleavage.",
-          style = "margin-top: 20px; font-size: 18px;"
-        ),
-        hr(),
-        h3(textOutput("rnaseh_title")),
-        div(uiOutput("rnaseh_info"), style = "margin-bottom: 15px;"),
-        hr(),
-        
-        fluidRow(column(
-          6,
-          numericInput(
-            "mod_5prime",
-            label = tagList(
-              "Amount of modified nucleotides at the 5' end  ",
-              tags$span(
-                tags$img(src = "questionmark.png", height = "20px"),
-                title = "This setting adds modifications to the 5' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 2 modified nucleotides on the 3' end of the target mRNA is allowed.",
-                `data-toggle` = "tooltip",
-                style = "cursor: pointer;"
-              )
-            ),
-            value = 5,
-            min = 0,
-            max = 10,
-            width = "60%"
-          ),
-        ), column(
-          6,
-          numericInput(
-            "mod_3prime",
-            label = tagList(
-              "Amount of modified nucleotides at the 3' end  ",
-              tags$span(
-                tags$img(src = "questionmark.png", height = "20px"),
-                title = "This setting adds modifications to the 3' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 4 modified nucleotides on the 5' end of the target mRNA is allowed.",
-                `data-toggle` = "tooltip",
-                style = "cursor: pointer;"
-              )
-            ),
-            value = 5,
-            min = 0,
-            max = 10,
-            width = "60%"
-          )
-        )),
-        actionButton("add_mods", "Apply end modifications", class = "btn-primary"),
-        hr(),
-        
-        downloadButton("download_rnaseh", "Download results", style = "margin-bottom: 15px;"),
-        dataTableOutput("rnaseh_results"),
-        hr(),
-        
-        h3("Visualised cleavage site: "),
-        uiOutput("cleavage_visual"),
-      ),
-      
-      tabPanel(
-        "Off target results", 
-        div("This page displays the off-targets for the selected target mRNA sequence based on the allowed number of mismatches. For the complementary ASO sequence, it shows mismatches, deletions, insertions, protein name and additional information from GGGenome. The protein name is then given to Protein Atlas to retrieve the tissue expression data. This page also calculates the accessibility potential of each off-target.", style="margin-top: 20px; font-size: 18px;"),
-        hr(),
-        uiOutput("gggenome_status"),
-        h3(textOutput("offtarget_title")),
-        textOutput("aso_seq"),
-        textOutput("numb_offtargets"),
-        hr(),
-        fluidRow(
-          column(6, 
-                 selectInput(
-                   "user_mismatch",
-                   label = tagList(
-                     "Select number of mismatches allowed  ",
-                     tags$span(
-                       tags$img(src = "questionmark.png", height = "20px"),
-                       title = "This setting identifies off-target sequences according to the number of mismatches permitted in the target mRNA, with a default value of one mismatch. Allowing more mismatches results in more off-targets being detected but also increases the processing time.",
-                       `data-toggle` = "tooltip",
-                       style = "cursor: pointer;"
-                     )
-                   ),
-                   choices = list(
-                     "0" = 0,
-                     "1" = 1,
-                     "2" = 2,
-                     "3" = 3
-                   )
-                 ),
-                 actionButton("apply_mismatch", "Apply", class = "btn-primary"),
-          ),
-          column(6,
-                 fluidRow("Run off-target tissue expression and OMIM disease search (may take some time)"),
-                 
-                 fluidRow(
-                   selectInput("target_tissue", label = tagList(
-                     "Select target tissue  ",
-                     tags$span(
-                       tags$img(src = "questionmark.png", height = "20px"),
-                       title = "For each off-target, tissue-specific expression data is retrieved from the Protein Atlas. This data, combined with the off-target information, is then used to query OMIM for associated diseases. Currently, the analysis supports the brain, eyes, and liver, with additional tissues planned as further developments become available.",
-                       `data-toggle` = "tooltip",
-                       style = "cursor: pointer;"
-                     )
-                   ),
-                   choices = c(
-                     "Brain",
-                     "Eye",
-                     "Endrocrine tissue",
-                     "Respiratory system",
-                     "Proximal digestive tract",
-                     "Gastrointestinal tract",
-                     "Liver & galbladder",
-                     "Pancreas",
-                     "Kidney & urinary bladder",
-                     "Male tissues",
-                     "Female tissues",
-                     "Muscle tissues",
-                     "Connective & soft tissues",
-                     "Skin",
-                     "Bone marrow & lymphoid tissues"
-                   )
-                   ),
-                   actionButton("PAtlas_OMIM_search", "Run"))
-          )
-        ),
-        hr(),
-        downloadButton("download_offtarget", "Download results", style = "margin-bottom: 15px;"),
-        DTOutput("offtarget_results"),
-      ),
-      # tabPanel(
-      #   "Patient-specific design",
-      #   div(
-      #     "This page designs ASOs for a patient-specific genomic region. The app takes the first SNV and last SNV within the selected gene, adds a flanking region on both sides, applies the patient variants to the reference sequence, and generates ASOs only across that personalized window.",
-      #     style = "margin-top: 20px; font-size: 18px;"
-      #   ),
-      #   hr(),
-      #   
-      #   fluidRow(
-      #     column(
-      #       4,
-      #       wellPanel(
-      #         h4("Patient input"),
-      #         
-      #         selectizeInput(
-      #           "ensemble_id_input_patient",
-      #           label = "Enter Gene or Ensembl ID (ENSG…):",
-      #           choices = NULL,
-      #           multiple = FALSE,
-      #           options = list(
-      #             placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
-      #             maxOptions = 50,
-      #             create = TRUE
-      #           )
-      #         ),
-      #         
-      #         fileInput(
-      #           "patient_variant_file",
-      #           "Upload patient SNV CSV",
-      #           accept = c(".csv")
-      #         ),
-      #         
-      #         tags$small("Required columns: chr, pos, ref, alt"),
-      #         br(), br(),
-      #         
-      #         numericInput(
-      #           "patient_flank",
-      #           "Flanking nucleotides before first and after last SNV",
-      #           value = 50,
-      #           min = 0,
-      #           max = 1000,
-      #           step = 1
-      #         ),
-      #         
-      #         sliderInput(
-      #           "patient_oligo_length_range",
-      #           "ASO length",
-      #           min = 15,
-      #           max = 25,
-      #           value = c(18, 20)
-      #         ),
-      #         
-      #         checkboxInput(
-      #           "patient_linux_input",
-      #           "Accessibility calculation (Linux-OS only)",
-      #           value = TRUE
-      #         ),
-      #         
-      #         actionButton("run_patient_button", "Run patient analysis"),
-      #         br(), br(),
-      #         
-      #         downloadButton("download_patient_filtered", "Download patient results")
-      #       )
-      #     ),
-      #     
-      #     column(
-      #       8,
-      #       h4("Patient window summary"),
-      #       tableOutput("patient_summary"),
-      #       hr(),
-      #       h4("Patient-specific ASO results"),
-      #       DTOutput("patient_results")
-      #     )
-      #   )
-      # )
     ),
-    width = 9
-  )
+    
+    ## =========================================================
+    ## PATIENT-SPECIFIC MODE
+    ## =========================================================
+    tabPanel(
+      "Patient-specific design",
+      div(
+        class = "mode-tab",
+        sidebarLayout(
+          sidebarPanel(
+            width = 3,
+            fluidRow(
+              column(
+                12,
+                
+                selectizeInput(
+                  "ensemble_id_input_patient",
+                  label = tagList(
+                    "Enter Gene or Ensembl ID (ENSG…):  ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Please enter a gene, the script does not support transcript inputs.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  choices  = NULL,
+                  multiple = FALSE,
+                  options  = list(
+                    placeholder = "Type a gene symbol (e.g. TP53) or Ensembl ID…",
+                    maxOptions  = 50,
+                    create      = TRUE
+                  )
+                ),
+                
+                fileInput(
+                  "patient_variant_file",
+                  label = tagList(
+                    "Submit patient .bcf, .vcf, or .vcf.gz file: ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "ERASOR runs locally. Indexed .bcf and .vcf.gz files are best for later region-based reading. Plain .vcf is also accepted for now.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  accept = c(".bcf", ".vcf", ".vcf.gz")
+                ),
+                
+                fileInput(
+                  "patient_variant_index_file",
+                  label = tagList(
+                    "Upload optional index (.tbi or .csi): ",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Optional at this stage. Supported index formats are .tbi and .csi.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  accept = c(".tbi", ".csi")
+                ),
+                
+                textInput(
+                  "patient_region_input",
+                  label = tagList(
+                    "Optional chromosome region",
+                    tags$span(
+                      tags$img(
+                        src = "questionmark.png",
+                        height = "20px",
+                        style = "margin-bottom: 3px;"
+                      ),
+                      title = "Optional region in the format chr:start-end. If left empty, ERASOR will use the selected gene coordinates plus the flank below.",
+                      `data-placement` = "right",
+                      `data-toggle` = "tooltip",
+                      style = "cursor: pointer;"
+                    )
+                  ),
+                  placeholder = "e.g. chr11:532242-537343"
+                ),
+                
+                numericInput(
+                  "patient_flank",
+                  "Flank around selected gene (bp)",
+                  value = 0,
+                  min = 0,
+                  max = 5000,
+                  step = 1
+                ),
+                
+                fluidRow(
+                  column(
+                    6,
+                    actionButton("run_button_patient", "Run")
+                  )
+                )
+              )
+            )
+          ),
+          
+          mainPanel(
+            width = 9,
+            tabsetPanel(
+              id = "tabs_main_patient",
+              
+              tabPanel(
+                "Input summary",
+                div(
+                  "This page currently only checks the patient input setup. It verifies the selected gene, stages the uploaded variant and index files, resolves the chromosome region, and shows a summary of the detected input. No variant reading or ASO generation is performed yet.",
+                  style = "margin-top: 20px; font-size: 18px;"
+                ),
+                hr(),
+                h4("Patient input summary"),
+                tableOutput("patient_summary"),
+                hr(),
+                h4("Status checks"),
+                DTOutput("unfiltered_results_table_patient"),
+                hr(),
+                h4("Resolved inputs"),
+                DTOutput("results1_patient"),
+                hr(),
+                downloadButton("Download_unfiltered_patient", "Download Input Summary"),
+                br(), br(),
+                downloadButton("Download_filtered_patient", "Download Input Summary")
+              )
+            )
+          )
+        )
+      )
+    )
   ),
+  
   tags$script(HTML("
-  var loadingDotsInterval = setInterval(function() {
-    var el = document.getElementById('loading_dots');
-    if (!el) return;
+    var loadingDotsInterval = setInterval(function() {
+      var el = document.getElementById('loading_dots');
+      if (!el) return;
 
-    if (el.textContent === '.') {
-      el.textContent = '..';
-    } else if (el.textContent === '..') {
-      el.textContent = '...';
-    } else {
-      el.textContent = '.';
-    }
-  }, 500);
-")),
+      if (el.textContent === '.') {
+        el.textContent = '..';
+      } else if (el.textContent === '..') {
+        el.textContent = '...';
+      } else {
+        el.textContent = '.';
+      }
+    }, 500);
+  ")),
   
   tags$script(
     HTML('$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });')
   )
 )
-
-
