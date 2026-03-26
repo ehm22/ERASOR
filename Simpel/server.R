@@ -724,15 +724,6 @@ function(input, output, session) {
   perf_range <- rangeFilterServer("perfect_hits", 0, 200, fixed = "left")
   mm_range   <- rangeFilterServer("mismatch_hits",0, 500, fixed = "left")
   
-  ###$$$####
-  tox_range_patient <- rangeFilterServer("tox_score_patient",    0, 136, fixed = "right")
-  gc_range_patient  <- rangeFilterServer("gc_content_patient",   0, 100, fixed = "none")
-  pm_range_patient  <- rangeFilterServer("pm_freq_patient",      0, 1,   fixed = "left")
-  acc_range_patient <- rangeFilterServer("accessibility_patient",0, 1,   fixed = "none")
-  perf_range_patient <- rangeFilterServer("perfect_hits_patient", 0, 200, fixed = "left")
-  mm_range_patient   <- rangeFilterServer("mismatch_hits_patient",0, 500, fixed = "left")
-  ###$$$###
-  
   # starts timer, shows that the scirpt started and is loadin gthe progress bar
   
   observeEvent(input$run_button, {
