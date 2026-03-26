@@ -68,6 +68,7 @@ rename_rnaseh_cols <- function(df) {
 
 # helper function for vcf and bcf file input for patient design
 ####$$$####
+
 normalize_chr_style <- function(x) {
   x <- as.character(x)
   x <- sub("^chr", "", x, ignore.case = TRUE)
@@ -143,31 +144,38 @@ stage_patient_variant_files <- function(variant_input, index_input = NULL) {
   )
 }
 
-read_patient_variants_bcftools <- function(variant_path, region_string, is_indexed = FALSE, bcftools = "bcftools") {
-  bcftools_path <- Sys.which(bcftools)
-  if (!nzchar(bcftools_path)) {
-    stop("bcftools not found on PATH")
-  }
+read_patient_variants_bcftools <- function(variant_path, region_string, is_indexed = FALSE) {
+  bcftools_path <- get_bcftools_path()
   
-  # Use indexed jump for indexed inputs, streaming target filter otherwise
   region_flag <- if (isTRUE(is_indexed)) "-r" else "-t"
   
+  out_file <- tempfile(fileext = ".tsv")
+  err_file <- tempfile(fileext = ".log")
+  
+  # IMPORTANT:
+  # bcftools wants literal backslash escapes here, not actual tabs/newlines
   fmt <- "%CHROM\\t%POS\\t%REF\\t%ALT\\n"
+  
   args <- c(
     "query",
-    region_flag, region_string,
-    "-f", fmt,
-    variant_path
+    region_flag, shQuote(region_string),
+    "-f", shQuote(fmt),
+    shQuote(variant_path)
   )
   
-  out <- system2(
+  status <- system2(
     command = bcftools_path,
     args = args,
-    stdout = TRUE,
-    stderr = TRUE
+    stdout = out_file,
+    stderr = err_file
   )
   
-  if (length(out) == 0) {
+  if (!identical(status, 0L)) {
+    err_msg <- paste(readLines(err_file, warn = FALSE), collapse = "\n")
+    stop(paste("bcftools failed:", err_msg))
+  }
+  
+  if (!file.exists(out_file) || file.info(out_file)$size == 0) {
     return(tibble(
       chr = character(),
       pos = integer(),
@@ -177,14 +185,14 @@ read_patient_variants_bcftools <- function(variant_path, region_string, is_index
   }
   
   df <- read.delim(
-    text = paste(out, collapse = "\n"),
+    out_file,
     header = FALSE,
     sep = "\t",
     stringsAsFactors = FALSE,
     col.names = c("chr", "pos", "ref", "alt")
   )
   
-  df <- as_tibble(df) %>%
+  as_tibble(df) %>%
     mutate(
       chr = normalize_chr_style(chr),
       pos = as.integer(pos),
@@ -193,12 +201,10 @@ read_patient_variants_bcftools <- function(variant_path, region_string, is_index
     ) %>%
     filter(
       !is.na(pos),
-      !grepl(",", alt),      # keep simple ALT only
+      !grepl(",", alt),
       nchar(ref) == 1,
       nchar(alt) == 1
     )
-  
-  df
 }
 
 filter_snvs_to_gene <- function(snvs_raw, gene_chr, gene_start, gene_end) {
@@ -279,6 +285,69 @@ annotate_patient_snv_overlap <- function(target_annotation_patient, snvs_gene) {
   target_annotation_patient
 }
 ####$$$####
+
+###$$$###
+# helper with bcftools import
+get_bcftools_path <- function() {
+  bcftools_path <- Sys.which("bcftools")
+  
+  if (bcftools_path == "") {
+    stop("bcftools is not installed in this Docker image or not available on PATH.")
+  }
+  
+  bcftools_path
+}
+###$$$###
+
+
+###$$$#####
+# function to map the snvs to the reference sequence
+apply_snvs_to_reference <- function(ref_seq, snv_df, region_start) {
+  # Convert the DNAString reference sequence to a character vector of single bases
+  seq_chars <- strsplit(as.character(ref_seq), "")[[1]]
+  
+  # If there are no SNVs, return the original sequence unchanged
+  if (nrow(snv_df) == 0) {
+    return(DNAString(paste(seq_chars, collapse = "")))
+  }
+  
+  # Loop over each SNV and replace the reference base at that genomic position
+  for (i in seq_len(nrow(snv_df))) {
+    genomic_pos <- snv_df$pos[i]
+    ref_base_vcf <- toupper(snv_df$ref[i])
+    alt_base_vcf <- toupper(snv_df$alt[i])
+    
+    # Convert genomic position to position inside the selected sequence
+    rel_pos <- genomic_pos - region_start + 1L
+    
+    # Skip anything outside the selected region
+    if (rel_pos < 1L || rel_pos > length(seq_chars)) {
+      next
+    }
+    
+    # Optional safety check:
+    # confirm the reference base in the genome matches the VCF REF allele
+    ref_base_genome <- toupper(seq_chars[rel_pos])
+    
+    if (ref_base_genome != ref_base_vcf) {
+      warning(
+        paste0(
+          "Reference mismatch at genomic position ", genomic_pos,
+          ": genome has ", ref_base_genome,
+          ", VCF REF is ", ref_base_vcf
+        )
+      )
+      next
+    }
+    
+    # Replace reference base with patient ALT base
+    seq_chars[rel_pos] <- alt_base_vcf
+  }
+  
+  DNAString(paste(seq_chars, collapse = ""))
+}
+
+#####$$$#####
 
 # compute neurotox here for both tabs
 # Make the tox score function
@@ -2535,6 +2604,31 @@ function(input, output, session) {
   ###############################################################
   
   ######$$$#######
+  observeEvent(input$ensemble_id_input_patient, {
+    req(input$ensemble_id_input_patient)
+    
+    ensembl_ID <- input$ensemble_id_input_patient
+    
+    # use gene symbol annotation toupdate chromsome region
+    target_ranges <- gdb_for_choices[names(gdb_for_choices) == ensembl_ID]
+    
+    if (length(target_ranges) != 1) {
+      return()
+    }
+    
+    gene_chr   <- normalize_chr_style(as.character(seqnames(target_ranges)))
+    gene_start <- start(target_ranges)
+    gene_end   <- end(target_ranges)
+    
+    region_string <- paste0(gene_chr, ":", gene_start, "-", gene_end)
+    
+    updateTextInput(
+      session,
+      inputId = "patient_region_input",
+      value = region_string
+    )
+  }, ignoreInit = TRUE)
+  
   observeEvent(input$run_button_patient, {
     
     req(input$ensemble_id_input_patient)
@@ -2621,6 +2715,67 @@ function(input, output, session) {
           gene_end + flank
         )
       }
+      # parse the chromosome region string into chr/start/end
+      region_info <- parse_region_string(region_string)
+      
+      # extract patient snvs
+      incProgress(0.60, detail = "Reading patient SNVs")
+      
+      snvs_raw <- tryCatch(
+        read_patient_variants_bcftools(
+          variant_path  = staged$variant_path,
+          region_string = region_string,
+          is_indexed    = staged$is_indexed
+        ),
+        error = function(e) {
+          showNotification(
+            paste("bcftools failed:", conditionMessage(e)),
+            type = "error",
+            duration = NULL
+          )
+          return(NULL)
+        }
+      )
+      
+      if (is.null(snvs_raw)) {
+        return()
+      }
+      
+      # keep only SNVs that fall inside the selected region
+      target_chr <- normalize_chr_style(region_info$chr)
+      
+      snvs_region <- snvs_raw %>%
+        dplyr::mutate(chr = normalize_chr_style(chr)) %>%
+        dplyr::filter(
+          chr == target_chr,
+          pos >= region_info$start,
+          pos <= region_info$end
+        ) %>%
+        dplyr::arrange(pos)
+      
+      incProgress(0.70, detail = "Getting reference sequence")
+      
+      region_gr <- GenomicRanges::GRanges(
+        seqnames = region_info$chr,
+        ranges   = IRanges::IRanges(
+          start = region_info$start,
+          end   = region_info$end
+        ),
+        strand = "+"
+      )
+      
+      # Make chromosome naming match the BSgenome object
+      GenomeInfoDb::seqlevelsStyle(region_gr) <- GenomeInfoDb::seqlevelsStyle(Hsapiens)
+      
+      ref_seq <- getSeq(Hsapiens, region_gr)[[1]]
+      
+      incProgress(0.80, detail = "Applying SNVs to reference")
+      
+      patient_seq <- apply_snvs_to_reference(
+        ref_seq      = ref_seq,
+        snv_df       = snvs_region,
+        region_start = region_info$start
+      )
       
       incProgress(0.75, detail = "Rendering upload summary")
       
@@ -2638,8 +2793,10 @@ function(input, output, session) {
           "Index file detected",
           "Index staged path",
           "Indexed input",
-          "Region to use later",
-          "Flank"
+          "Region used",
+          "Flank",
+          "Reference sequence length",
+          "SNVs in selected region"
         ),
         Value = c(
           ensembl_ID,
@@ -2654,7 +2811,9 @@ function(input, output, session) {
           ifelse(is.null(staged$index_path), "", staged$index_path),
           ifelse(staged$is_indexed, "yes", "no"),
           region_string,
-          flank
+          flank,
+          nchar(as.character(ref_seq)),
+          nrow(snvs_region)
         )
       )
       
@@ -2673,13 +2832,17 @@ function(input, output, session) {
               "Gene selected",
               "Variant file uploaded",
               "Variant file staged",
-              "Region resolved"
+              "Region resolved",
+              "Reference sequence retrieved",
+              "Patient SNVs read"
             ),
             status = c(
               "yes",
               "yes",
               "yes",
-              "yes"
+              "yes",
+              "yes",
+              ifelse(nrow(snvs_region) > 0, "yes", "no variants found")
             )
           ),
           rownames = FALSE,
@@ -2711,6 +2874,21 @@ function(input, output, session) {
         )
       })
       
+      output$patient_snvs_table <- renderDT({
+        datatable(
+          snvs_region,
+          rownames = FALSE,
+          options = list(pageLength = 10)
+        )
+      })
+      
+      output$patient_reference_sequence <- renderText({
+        as.character(ref_seq)
+      })
+      
+      output$patient_modified_sequence <- renderText({
+        as.character(patient_seq)
+      })
       
       # download buttons for output tables
       output$Download_unfiltered_patient <- downloadHandler(

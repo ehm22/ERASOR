@@ -4,6 +4,7 @@ library(shinyjs)
 library(shinythemes)
 
 ### for sliders with numeric input boxes
+show_patient_tab <- FALSE 
 
 rangeFilterUI <- function(
     id,
@@ -705,7 +706,8 @@ ui <- fluidPage(
     ## =========================================================
     ## PATIENT-SPECIFIC MODE
     ## =========================================================
-    tabPanel(
+    
+     if(show_patient_tab) tabPanel(
       "Patient-specific design",
       div(
         class = "mode-tab",
@@ -840,7 +842,18 @@ ui <- fluidPage(
                 hr(),
                 downloadButton("Download_unfiltered_patient", "Download Input Summary"),
                 br(), br(),
-                downloadButton("Download_filtered_patient", "Download Input Summary")
+                downloadButton("Download_filtered_patient", "Download Input Summary"),
+                hr(),
+                h4("Detected SNVs in selected region"),
+                DTOutput("patient_snvs_table"),
+                
+                hr(),
+                h4("Reference sequence"),
+                verbatimTextOutput("patient_reference_sequence"),
+                
+                hr(),
+                h4("Patient-specific sequence"),
+                verbatimTextOutput("patient_modified_sequence")
               )
             )
           )
