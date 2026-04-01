@@ -2,10 +2,14 @@ library(DT)
 library(shiny)
 library(shinyjs)
 library(shinythemes)
+##&*## just to troll annelot
+library(bslib)
+##&*## just to troll annelot
+
+# if this is TRUE the patient specific tab will show, if FALSE then the tab is hidden
+show_patient_tab <- TRUE 
 
 ### for sliders with numeric input boxes
-show_patient_tab <- FALSE 
-
 rangeFilterUI <- function(
     id,
     label = NULL,
@@ -71,7 +75,16 @@ ui <- fluidPage(
     )
   ),
   
-  theme = shinythemes::shinytheme("flatly"),
+    theme = shinythemes::shinytheme("flatly"),
+  
+  #### troll purple for annelot ##&*####
+  # theme = bs_theme(
+  #   bootswatch = "flatly",
+  #   primary = "purple",
+  #   bg = "#ffe4ec",   # light pink background
+  #   fg = "#2b002b"    # dark text so it stays readable
+  # ),
+  #### troll purple for annelot ##&*####
   
   tags$head(
     tags$style(
@@ -280,24 +293,26 @@ ui <- fluidPage(
                   ),
                   value = FALSE
                 ),
-                
-                checkboxInput(
-                  "linux_input",
-                  label = tagList(
-                    "Accessibility calculation (Linux-OS only)",
-                    tags$span(
-                      tags$img(
-                        src = "questionmark.png",
-                        height = "20px",
-                        style = "margin-bottom: 3px;"
-                      ),
-                      title = "Enable this setting only when running on a Linux operating system. Some features, such as the ViennaRNA analysis, require Linux. Enabling this option on other systems, such as Windows or Mac, may cause the program to fail.",
-                      `data-placement` = "top",
-                      `data-toggle` = "tooltip",
-                      style = "cursor: pointer;"
-                    )
-                  ),
-                  value = TRUE
+                div(
+                  style = "display:none;", # this keeps the filter and button hidden
+                  checkboxInput(
+                    "linux_input",
+                    label = tagList(
+                      "Accessibility calculation (Linux-OS only)",
+                      tags$span(
+                        tags$img(
+                          src = "questionmark.png",
+                          height = "20px",
+                          style = "margin-bottom: 3px;"
+                        ),
+                        title = "Enable this setting only when running on a Linux operating system. Some features, such as the ViennaRNA analysis, require Linux. Enabling this option on other systems, such as Windows or Mac, may cause the program to fail.",
+                        `data-placement` = "top",
+                        `data-toggle` = "tooltip",
+                        style = "cursor: pointer;"
+                      )
+                    ),
+                    value = FALSE
+                  )
                 ),
                 
                 div(
@@ -353,7 +368,7 @@ ui <- fluidPage(
                       ),
                       
                       h5(tagList(
-                        HTML("<b>Acute neurotoxicity score (Hagedoorn) </b>"),
+                        HTML("<b>Acute neurotoxicity score (Hagedorn) </b>"),
                         tags$span(
                           tags$img(
                             src = "questionmark.png",
@@ -479,35 +494,37 @@ ui <- fluidPage(
                         ),
                         column(3, checkboxInput("Poly_input", "Enable", value = TRUE))
                       ),
-                      
-                      h5(tagList(
-                        HTML("<b>Accessibility </b>"),
-                        tags$span(
-                          tags$img(
-                            src = "questionmark.png",
-                            height = "20px",
-                            style = "margin-bottom: 3px;"
-                          ),
-                          title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs.",
-                          `data-toggle` = "tooltip",
-                          `data-placement` = "right",
-                          style = "cursor: pointer;"
-                        )
-                      )),
-                      fluidRow(
-                        column(
-                          9,
-                          rangeFilterUI(
-                            id    = "accessibility",
-                            label = NULL,
-                            min   = 0,
-                            max   = 1,
-                            value = c(0, 0.000001),
-                            step  = 0.000001,
-                            fixed = "none"
+                      div(
+                        style = "display:none;", # this keeps the filter hidden
+                        h5(tagList(
+                          HTML("<b>Accessibility </b>"),
+                          tags$span(
+                            tags$img(
+                              src = "questionmark.png",
+                              height = "20px",
+                              style = "margin-bottom: 3px;"
+                            ),
+                            title = "This option is a quality control score for the accessibility of the target mRNA sequences. The score estimates how accessible the target mRNA sequences are, which is an important factor in finding potentially effective ASOs.",
+                            `data-toggle` = "tooltip",
+                            `data-placement` = "right",
+                            style = "cursor: pointer;"
                           )
-                        ),
-                        column(3, checkboxInput("Accessibility_input", "Enable", value = TRUE))
+                        )),
+                        fluidRow(
+                          column(
+                            9,
+                            rangeFilterUI(
+                              id    = "accessibility",
+                              label = NULL,
+                              min   = 0,
+                              max   = 1,
+                              value = c(0, 0.000001),
+                              step  = 0.000001,
+                              fixed = "none"
+                            )
+                          ),
+                          column(3, checkboxInput("Accessibility_input", "Enable", value = FALSE))
+                        )
                       ),
                       
                       fluidRow(

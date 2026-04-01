@@ -66,6 +66,65 @@ rename_rnaseh_cols <- function(df) {
   df
 }
 
+##############
+# helper function to get output seqeunces from ggenome
+render_subject_alignment_html <- function(subject_seq, match_string) {
+  s_raw <- gsub("-", "", as.character(subject_seq))
+  s <- strsplit(s_raw, "")[[1]]
+  
+  # Swap I and D for display so they match your intended biology
+  ops_raw <- strsplit(as.character(match_string), "")[[1]]
+  ops <- chartr("ID", "DI", ops_raw)
+  
+  out <- character(0)
+  j <- 1L
+  
+  for (op in ops) {
+    if (op == "=") {
+      if (j <= length(s)) {
+        out <- c(out, s[j])
+        j <- j + 1L
+      }
+      
+    } else if (op == "X") {
+      if (j <= length(s)) {
+        out <- c(out, paste0(
+          "<span style='color:red;font-weight:bold;text-decoration:underline;'>",
+          s[j],
+          "</span>"
+        ))
+        j <- j + 1L
+      }
+      
+    } else if (op == "I") {
+      # query has a nucleotide that is missing in the subject
+      out <- c(out,
+               "<span style='color:black;font-weight:bold;'>-</span>"
+      )
+      
+    } else if (op == "D") {
+      # subject has an extra nucleotide compared to the query
+      if (j <= length(s)) {
+        out <- c(out, paste0(
+          "<span style='color:#00cc00;font-weight:bold;text-decoration:underline;'>",
+          s[j],
+          "</span>"
+        ))
+        j <- j + 1L
+      }
+      
+    } else {
+      if (j <= length(s)) {
+        out <- c(out, s[j])
+        j <- j + 1L
+      }
+    }
+  }
+  
+  paste0(out, collapse = "")
+}
+###################
+
 # helper function for vcf and bcf file input for patient design
 ####$$$####
 
@@ -144,23 +203,134 @@ stage_patient_variant_files <- function(variant_input, index_input = NULL) {
   )
 }
 
+get_vcf_samples <- function(variant_path) {
+  bcftools_path <- get_bcftools_path()
+  
+  out <- system2(
+    command = bcftools_path,
+    args = c("query", "-l", variant_path),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  
+  out <- trimws(out)
+  out[nzchar(out)]
+}
+
+classify_variant_type <- function(ref, alt) {
+  if (grepl(",", alt, fixed = TRUE)) {
+    return("multiallelic")
+  }
+  
+  if (grepl("^<", alt)) {
+    return("symbolic")
+  }
+  
+  if (nchar(ref) == 1 && nchar(alt) == 1) {
+    return("SNV")
+  }
+  
+  if (nchar(ref) < nchar(alt)) {
+    return("insertion")
+  }
+  
+  if (nchar(ref) > nchar(alt)) {
+    return("deletion")
+  }
+  
+  if (nchar(ref) == nchar(alt) && nchar(ref) > 1) {
+    return("MNV_or_complex_substitution")
+  }
+  
+  "other"
+}
+
+parse_gt_to_haplotypes <- function(ref, alt, gt) {
+  gt <- trimws(as.character(gt))
+  
+  if (is.na(gt) || gt == "" || gt == "." || gt == "./." || gt == ".|.") {
+    return(list(
+      phased = FALSE,
+      allele1_code = NA_character_,
+      allele2_code = NA_character_,
+      hap1_allele = NA_character_,
+      hap2_allele = NA_character_,
+      variant_on = "unknown",
+      allele_note = "missing genotype"
+    ))
+  }
+  
+  phased <- grepl("\\|", gt)
+  sep <- if (phased) "\\|" else "/"
+  
+  gt_parts <- strsplit(gt, sep)[[1]]
+  if (length(gt_parts) == 1) {
+    gt_parts <- c(gt_parts, NA_character_)
+  }
+  
+  allele1_code <- gt_parts[1]
+  allele2_code <- gt_parts[2]
+  
+  alt_parts <- strsplit(alt, ",", fixed = TRUE)[[1]]
+  
+  decode_allele <- function(code) {
+    if (is.na(code) || code == ".") return(NA_character_)
+    if (code == "0") return(ref)
+    
+    idx <- suppressWarnings(as.integer(code))
+    if (is.na(idx) || idx < 1 || idx > length(alt_parts)) {
+      return(NA_character_)
+    }
+    
+    alt_parts[idx]
+  }
+  
+  hap1_allele <- decode_allele(allele1_code)
+  hap2_allele <- decode_allele(allele2_code)
+  
+  variant_on <- if (!phased) {
+    "unphased"
+  } else if (!is.na(allele1_code) && allele1_code != "0" &&
+             !is.na(allele2_code) && allele2_code != "0") {
+    "both_haplotypes"
+  } else if (!is.na(allele1_code) && allele1_code != "0") {
+    "haplotype_1"
+  } else if (!is.na(allele2_code) && allele2_code != "0") {
+    "haplotype_2"
+  } else {
+    "reference_only"
+  }
+  
+  allele_note <- if (phased) {
+    "phased genotype: haplotype assignment available"
+  } else {
+    "unphased genotype: haplotype assignment not known"
+  }
+  
+  list(
+    phased = phased,
+    allele1_code = allele1_code,
+    allele2_code = allele2_code,
+    hap1_allele = hap1_allele,
+    hap2_allele = hap2_allele,
+    variant_on = variant_on,
+    allele_note = allele_note
+  )
+}
+
 read_patient_variants_bcftools <- function(variant_path, region_string, is_indexed = FALSE) {
   bcftools_path <- get_bcftools_path()
   
   region_flag <- if (isTRUE(is_indexed)) "-r" else "-t"
   
-  out_file <- tempfile(fileext = ".tsv")
+  out_file <- tempfile(fileext = ".vcf")
   err_file <- tempfile(fileext = ".log")
   
-  # IMPORTANT:
-  # bcftools wants literal backslash escapes here, not actual tabs/newlines
-  fmt <- "%CHROM\\t%POS\\t%REF\\t%ALT\\n"
-  
   args <- c(
-    "query",
-    region_flag, shQuote(region_string),
-    "-f", shQuote(fmt),
-    shQuote(variant_path)
+    "view",
+    region_flag, region_string,
+    "-H",
+    variant_path
   )
   
   status <- system2(
@@ -180,35 +350,79 @@ read_patient_variants_bcftools <- function(variant_path, region_string, is_index
       chr = character(),
       pos = integer(),
       ref = character(),
-      alt = character()
+      alt = character(),
+      gt = character(),
+      sample = character()
     ))
   }
   
-  df <- read.delim(
-    out_file,
-    header = FALSE,
-    sep = "\t",
-    stringsAsFactors = FALSE,
-    col.names = c("chr", "pos", "ref", "alt")
+  # Read raw VCF body lines
+  lines <- readLines(out_file, warn = FALSE)
+  if (length(lines) == 0) {
+    return(tibble(
+      chr = character(),
+      pos = integer(),
+      ref = character(),
+      alt = character(),
+      gt = character(),
+      sample = character()
+    ))
+  }
+  
+  fields <- strsplit(lines, "\t", fixed = TRUE)
+  
+  df <- tibble(
+    chr    = vapply(fields, `[`, character(1), 1),
+    pos    = as.integer(vapply(fields, `[`, character(1), 2)),
+    ref    = vapply(fields, `[`, character(1), 4),
+    alt    = vapply(fields, `[`, character(1), 5),
+    format = vapply(fields, function(x) if (length(x) >= 9) x[9] else NA_character_, character(1)),
+    sample_field = vapply(fields, function(x) if (length(x) >= 10) x[10] else NA_character_, character(1))
   )
   
-  as_tibble(df) %>%
+  extract_gt <- function(format_string, sample_string) {
+    if (is.na(format_string) || is.na(sample_string)) return(NA_character_)
+    
+    fmt_parts <- strsplit(format_string, ":", fixed = TRUE)[[1]]
+    samp_parts <- strsplit(sample_string, ":", fixed = TRUE)[[1]]
+    
+    gt_idx <- match("GT", fmt_parts)
+    if (is.na(gt_idx) || gt_idx > length(samp_parts)) return(NA_character_)
+    
+    samp_parts[gt_idx]
+  }
+  
+  df <- df %>%
+    mutate(
+      gt = purrr::map2_chr(format, sample_field, extract_gt),
+      sample = NA_character_
+    ) %>%
+    select(chr, pos, ref, alt, gt, sample)
+  
+  gt_info <- purrr::pmap(
+    list(df$ref, df$alt, df$gt),
+    function(ref, alt, gt) parse_gt_to_haplotypes(ref, alt, gt)
+  )
+  
+  gt_tbl <- tibble(
+    phased = vapply(gt_info, `[[`, logical(1), "phased"),
+    allele1_code = vapply(gt_info, `[[`, character(1), "allele1_code"),
+    allele2_code = vapply(gt_info, `[[`, character(1), "allele2_code"),
+    hap1_allele = vapply(gt_info, `[[`, character(1), "hap1_allele"),
+    hap2_allele = vapply(gt_info, `[[`, character(1), "hap2_allele"),
+    variant_on = vapply(gt_info, `[[`, character(1), "variant_on"),
+    allele_note = vapply(gt_info, `[[`, character(1), "allele_note")
+  )
+  
+  bind_cols(df, gt_tbl) %>%
     mutate(
       chr = normalize_chr_style(chr),
-      pos = as.integer(pos),
-      ref = as.character(ref),
-      alt = as.character(alt)
-    ) %>%
-    filter(
-      !is.na(pos),
-      !grepl(",", alt),
-      nchar(ref) == 1,
-      nchar(alt) == 1
+      variant_type = purrr::map2_chr(ref, alt, classify_variant_type)
     )
 }
 
-filter_snvs_to_gene <- function(snvs_raw, gene_chr, gene_start, gene_end) {
-  snvs_raw %>%
+filter_snvs_to_gene <- function(variants_raw, gene_chr, gene_start, gene_end) {
+  variants_raw %>%
     filter(
       chr == normalize_chr_style(gene_chr),
       pos >= gene_start,
@@ -593,8 +807,8 @@ function(input, output, session) {
       )
     } else {
       showNotification(
-        "BioMart is currently unavailable. Running the script might lead to a crash/disconnect.",
-        type = "error",
+        "connection to BioMart is unstable. Running the script might lead to a crash/disconnect.",
+        type = "warning",
         duration = NULL
       )
     }
@@ -825,48 +1039,6 @@ function(input, output, session) {
       }
       
       # ----------------------------------- Functions ------------------------------
-  ###########&*#############
-          # # Make the tox score function
-      # 
-      # calculate_acute_neurotox <- function(xx) {
-      #   # make sure input is in character format
-      #   xx <- as.character(xx)
-      #   
-      #   # count the number of each nucleotide
-      #   lf <- function(x) {
-      #     x <- tolower(x)
-      #     x <- strsplit(x, "")[[1]]
-      #     x <- table(factor(x, levels = c("a", "c", "t", "g")))
-      #     return(x)
-      #   }
-      #   cnt_nt <- as.data.frame(t(sapply(xx, lf)))
-      #   # count number of nucleotides from the 3'-end untill it finds the first g
-      #   gfree3 <- function(x) {
-      #     x <- tolower(x)
-      #     x <- strsplit(x, "")[[1]]
-      #     tfg <- x == "g"
-      #     if (sum(tfg) == 0) {
-      #       l3 <- NA
-      #     } else {
-      #       posg <- c(1:length(x))[tfg]
-      #       l3 <- length(x) - max(posg)
-      #     }
-      #     return(l3)
-      #   }
-      #   cnt_gfree3 <- sapply(xx, gfree3)
-      #   cnt_gfree3[cnt_gfree3 > 20] <- 20      #Set max to 20
-      #   cnt_gfree3[is.na(cnt_gfree3)] <- 20  #Set no g in ASO to 20
-      #   ## Calculate final score based on trained parameters and return result
-      #   calc_out <- round(
-      #     136.0430 - 3.1263 * cnt_nt$a - 5.1100 * cnt_nt$c -
-      #       4.7217 * cnt_nt$t - 10.1264 * cnt_nt$g + 1.3577 *
-      #       cnt_gfree3,
-      #     1
-      #   )
-      #   
-      #   return(as.numeric(calc_out))
-      # }
-      ##########&*###############
       
       if (input$linux_input == TRUE) {
         # 2.5.1 Predict accessibility for an RNA target
@@ -1719,10 +1891,22 @@ function(input, output, session) {
       
       # Render the tables.
       ################ make download table identical to viewed table
-      results1_data <- reactive({
+      results1_lookup <- reactive({
         req(target_annotation)
         
         df <- target_annotation
+        
+        if (isTRUE(input$single_aso_input) && "input_order" %in% names(df)) {
+          df <- df %>% dplyr::arrange(input_order)
+        } else if ("off_target_score" %in% names(df)) {
+          df <- df %>% dplyr::arrange(dplyr::coalesce(off_target_score, Inf))
+        }
+        
+        df
+      })
+      
+      results1_data <- reactive({
+        df <- results1_lookup()
         
         column_order <- c(
           if (isTRUE(input$single_aso_input)) "input_order",
@@ -1977,75 +2161,19 @@ function(input, output, session) {
           paste0("# off targets: ", nrow(subset_df))})
         
       })
-      ###########&*##############
-      # output$offtarget_results <- DT::renderDT({
-      #   req(current_offtargets())
-      #   df <- current_offtargets()
-      #   
-      #   df_view <- df %>%
-      #     dplyr::select(-c(
-      #       line,
-      #       subject_seq,
-      #       query_seq,
-      #       start_target,
-      #       end_target,
-      #       snippet,
-      #       snippet_start,
-      #       snippet_end,
-      #       name
-      #     )) %>%
-      #     dplyr::select(
-      #       gene_name,
-      #       transcript,
-      #       match_string,
-      #       length,
-      #       matches,
-      #       mismatches,
-      #       deletions,
-      #       insertions,
-      #       distance,
-      #       offtarget_accessibility,
-      #       oe_lof,
-      #       dplyr::everything()
-      #     )
-      #   
-      #   # ---- SAFE display rename (no collisions) ----
-      #   display_map <- c(
-      #     gene_name               = "Gene symbol",
-      #     transcript              = "Transcript (Ensembl)",
-      #     match_string            = "Match (alignment)",
-      #     length                  = "Length (nt)",
-      #     matches                 = "Matches",
-      #     mismatches              = "Mismatches",
-      #     deletions               = "Deletions",
-      #     insertions              = "Insertions",
-      #     distance                = "Number of Mismatches/Indels",
-      #     offtarget_accessibility = "Accessibility (off-target)",
-      #     oe_lof                  = "GnomAD oe_lof"
-      #   )
-      #   
-      #   # apply mapping only where columns exist
-      #   nm <- names(df_view)
-      #   nm2 <- ifelse(nm %in% names(display_map), display_map[nm], nm)
-      #   
-      #   # enforce uniqueness so DT never crashes
-      #   names(df_view) <- make.unique(nm2, sep = " (dup) ")
-      #   
-      #   # ordering: find the (possibly renamed) distance column
-      #   dist_idx <- which(names(df_view) == "Number of Mismatches/Indels")
-      #   if (length(dist_idx) == 0) dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
-      #   distance_col <- dist_idx - 1  # DT uses 0-based
-      #   
-      #   DT::datatable(
-      #     df_view,
-      #     rownames = FALSE,
-      #     options = list(order = list(list(distance_col, "asc")))
-      #   )
-      # })
-      ###########&*############## 
+
       output$offtarget_results <- DT::renderDT({
         req(current_offtargets())
-        df <- current_offtargets()
+        df <- current_offtargets() %>%
+          mutate(
+            match_string_display = chartr("ID", "DI", match_string),
+            subject_seq_display = purrr::map2_chr(
+              subject_seq, match_string_display,
+              render_subject_alignment_html
+            ),
+            off_target_nt_length = nchar(gsub("-", "", subject_seq))
+          )
+  
         
         df_view <- df %>%
           dplyr::select(-dplyr::any_of(c(
@@ -2057,19 +2185,22 @@ function(input, output, session) {
             "snippet",
             "snippet_start",
             "snippet_end",
-            "name"
+            "name",
+            "matches",
+            "length",
+            "match_string"
           ))) %>%
           dplyr::select(
             dplyr::any_of(c(
               "gene_name",
               "transcript",
-              "match_string",
-              "length",
-              "matches",
+              "match_string_display",
+              "subject_seq_display",
+              "off_target_nt_length",
+              "distance",
               "mismatches",
               "deletions",
               "insertions",
-              "distance",
               "offtarget_accessibility",
               "oe_lof"
             )),
@@ -2079,13 +2210,13 @@ function(input, output, session) {
         display_map <- c(
           gene_name               = "Gene symbol",
           transcript              = "Transcript (Ensembl)",
-          match_string            = "Match (alignment)",
-          length                  = "Length (nt)",
-          matches                 = "Matches",
+          match_string_display    = "Match (alignment)",
+          subject_seq_display     = "Off-target sequence",
+          off_target_nt_length    = "Length (nt)",
+          distance                = "Number of Mismatches/Indels",
           mismatches              = "Mismatches",
           deletions               = "Deletions",
           insertions              = "Insertions",
-          distance                = "Number of Mismatches/Indels",
           offtarget_accessibility = "Accessibility (off-target)",
           oe_lof                  = "GnomAD oe_lof"
         )
@@ -2099,12 +2230,43 @@ function(input, output, session) {
           dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
         }
         distance_col <- dist_idx - 1
+        ####&*####
+      #   DT::datatable(
+      #     df_view,
+      #     rownames = FALSE,
+      #     options = list(order = list(list(distance_col, "asc")))
+      #   )
+      # })
+        ####&*#### 
         
-        DT::datatable(
+        dt <- DT::datatable(
           df_view,
           rownames = FALSE,
+          escape = FALSE,
           options = list(order = list(list(distance_col, "asc")))
         )
+      
+        if ("Match (alignment)" %in% names(df_view)) {
+          dt <- DT::formatStyle(
+            dt,
+            columns = "Match (alignment)",
+            `font-family` = "monospace",
+            `white-space` = "pre",
+            `letter-spacing` = "1px"
+          )
+        }
+        
+        if ("Off-target sequence" %in% names(df_view)) {
+          dt <- DT::formatStyle(
+            dt,
+            columns = "Off-target sequence",
+            `font-family` = "monospace",
+            `white-space` = "pre",
+            `letter-spacing` = "1px"
+          )
+        }
+        
+        dt
       })
       
       output$download_offtarget <- downloadHandler(
@@ -2379,7 +2541,7 @@ function(input, output, session) {
                                       output,
                                       session,
                                       table_id,
-                                      table_data,
+                                      table_data_reactive,
                                       off_targets_total,
                                       selected_target,
                                       oligo_sequence,
@@ -2406,7 +2568,16 @@ function(input, output, session) {
           proxy_other <- dataTableProxy(other_table)
           selectRows(proxy_other, NULL)
           
-          row_data <- table_data[row, ]
+          df_current <- table_data_reactive()
+          row_data <- df_current[row, , drop = FALSE]
+          
+          if (is.null(row_data$name) || nrow(row_data) == 0) return()
+          
+          seq <- toupper(row_data$name[[1]])
+          if (!grepl("^[ACGT]+$", seq)) return()
+          
+          selected_target(row_data)
+          oligo_sequence(row_data$oligo_seq[[1]])
           
           # Off-target functionality
           
@@ -2420,19 +2591,21 @@ function(input, output, session) {
           oligo_sequence(row_data$oligo_seq)
           
           rnaseh_data <- rnaseh_results(
-            selected_row_name = row_data$name,
+            selected_row_name = row_data$name[[1]],
+            oligo_seq = row_data$oligo_seq[[1]],
             mod_5prime = 5,
             mod_3prime = 5
           )
-          rnaseh_stored(rnaseh_data)
           
-          output$rnaseh_title <- renderText(paste0("RNase H results for: ", row_data$name))
+          output$rnaseh_title <- renderText(
+            paste0("RNase H results for: ", row_data$name[[1]])
+          )
           
-          output$rnaseh_info <- renderText({
+          output$rnaseh_info <- renderUI({
             HTML(
               paste0(
                 "length of sequence: ",
-                row_data$length,
+                row_data$length[[1]],
                 "<br>",
                 "Oligo sequence (ASO): ",
                 oligo_sequence()
@@ -2445,7 +2618,7 @@ function(input, output, session) {
             DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
           })
           
-          updateTabsetPanel(session, "tabs_main_general", selected = "RNase H cleavage results")
+          updateTabsetPanel(session, "tabs_main_general", selected = "Off target results")
           
           # Off-target functionality
           if (!is.null(summary_server)) {
@@ -2515,7 +2688,7 @@ function(input, output, session) {
         output = output,
         session = session,
         table_id = "results1",
-        table_data = target_annotation,
+        table_data = results1_lookup,
         off_targets_total = off_targets_total,
         selected_target = selected_target,
         oligo_sequence = oligo_sequence,
@@ -2718,10 +2891,10 @@ function(input, output, session) {
       # parse the chromosome region string into chr/start/end
       region_info <- parse_region_string(region_string)
       
-      # extract patient snvs
-      incProgress(0.60, detail = "Reading patient SNVs")
+      # extract patient variants
+      incProgress(0.60, detail = "Reading patient variants")
       
-      snvs_raw <- tryCatch(
+      variants_raw <- tryCatch(
         read_patient_variants_bcftools(
           variant_path  = staged$variant_path,
           region_string = region_string,
@@ -2737,14 +2910,13 @@ function(input, output, session) {
         }
       )
       
-      if (is.null(snvs_raw)) {
+      if (is.null(variants_raw)) {
         return()
       }
       
-      # keep only SNVs that fall inside the selected region
       target_chr <- normalize_chr_style(region_info$chr)
       
-      snvs_region <- snvs_raw %>%
+      variants_region <- variants_raw %>%
         dplyr::mutate(chr = normalize_chr_style(chr)) %>%
         dplyr::filter(
           chr == target_chr,
@@ -2769,11 +2941,15 @@ function(input, output, session) {
       
       ref_seq <- getSeq(Hsapiens, region_gr)[[1]]
       
-      incProgress(0.80, detail = "Applying SNVs to reference")
+      incProgress(0.80, detail = "Applying Variants to reference")
       
       patient_seq <- apply_snvs_to_reference(
-        ref_seq      = ref_seq,
-        snv_df       = snvs_region,
+        ref_seq = ref_seq,
+        snv_df = variants_region %>%
+          dplyr::filter(
+            variant_type == "SNV",
+            !grepl(",", alt)
+          ),
         region_start = region_info$start
       )
       
@@ -2796,7 +2972,7 @@ function(input, output, session) {
           "Region used",
           "Flank",
           "Reference sequence length",
-          "SNVs in selected region"
+          "Variants in selected region"
         ),
         Value = c(
           ensembl_ID,
@@ -2813,7 +2989,7 @@ function(input, output, session) {
           region_string,
           flank,
           nchar(as.character(ref_seq)),
-          nrow(snvs_region)
+          nrow(variants_region)
         )
       )
       
@@ -2834,7 +3010,7 @@ function(input, output, session) {
               "Variant file staged",
               "Region resolved",
               "Reference sequence retrieved",
-              "Patient SNVs read"
+              "Patient variants read"
             ),
             status = c(
               "yes",
@@ -2842,7 +3018,7 @@ function(input, output, session) {
               "yes",
               "yes",
               "yes",
-              ifelse(nrow(snvs_region) > 0, "yes", "no variants found")
+              ifelse(nrow(variants_region) > 0, "yes", "no variants found")
             )
           ),
           rownames = FALSE,
@@ -2876,9 +3052,25 @@ function(input, output, session) {
       
       output$patient_snvs_table <- renderDT({
         datatable(
-          snvs_region,
+          variants_region %>%
+            dplyr::select(
+              chr,
+              pos,
+              ref,
+              alt,
+              variant_type,
+              gt,
+              phased,
+              allele1_code,
+              allele2_code,
+              hap1_allele,
+              hap2_allele,
+              variant_on,
+              allele_note,
+              sample
+            ),
           rownames = FALSE,
-          options = list(pageLength = 10)
+          options = list(pageLength = 10, scrollX = TRUE)
         )
       })
       
@@ -2886,9 +3078,9 @@ function(input, output, session) {
         as.character(ref_seq)
       })
       
-      output$patient_modified_sequence <- renderText({
-        as.character(patient_seq)
-      })
+      # output$patient_modified_sequence <- renderText({
+      #   as.character(patient_seq)
+      # })
       
       # download buttons for output tables
       output$Download_unfiltered_patient <- downloadHandler(
