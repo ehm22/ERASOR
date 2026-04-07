@@ -6,7 +6,6 @@
   - [👥 Regular user setup (Shiny server only)](#-regular-user-setup-shiny-server-only)
   - [💻 Developer setup (RStudio + Git + SSH)](#-developer-setup-rstudio--git--ssh)
   - [✔ Setup Summary Table](#-setup-summary-table)
-- [🎯 Quick start guide](#quick-start-guide)
 - [📋 Features](#features)
   - [⚙️ Settings & Filters](#️-settings--filters)
     - [Gene Selection](#gene-selection)
@@ -297,38 +296,23 @@ podman rm -a
 | Run docker container                                        | ❌             | ✔                     |
 | Stop container                                              | ❌             | ✔                     |
 
-## 🎯 Quick start guide
-To get started quickly and get results after starting the shiny server follow these steps:
-
-1. To start enter the **ensemble ID** for the gene you want to target. 
-2. Tick or untick the checkboxes to change the output.
-    - Polymorphism analysis
-    - Conserved & Orthology
-    - Running on Linux-OS
-3. Select your desired **Oligo length** range
-4. Enter your values for **filtering**
-5. Press **"Run"** to start the application
-
-The runtime of ERASOR may be 10-60 minutes. Runtime is heavily dependent on the selected oligo length and gene size and can take longer than 60 minutes if unfavorable settings are selected. 
-
 ## 📋 Features
 
 ### ⚙️ Settings & Filters
 
 #### Gene Selection
 
-**Ensembl Gene ID**  
-Enter a valid Ensembl Gene ID (`ENSG…`) corresponding to the gene of interest.
+Select a gene by searching for the name or entering a valid Ensembl gene ID. 
 
 ---
 
 #### Analysis Features
 
 **Polymorphism Analysis**  
-Identifies single nucleotide polymorphisms (SNPs) associated with the selected Ensembl gene. SNPs are genetic variations where one nucleotide is substituted for another (e.g., C → T).
+Identifies single nucleotide polymorphisms (SNPs) associated with the selected  gene. SNPs are genetic variations where one nucleotide is substituted for another (e.g., C → T).
 
 **Conservation & Orthology**  
-Compares the selected Ensembl gene with the mouse genome to identify conserved regions and orthologous genes. Due to the strong genetic similarity between humans and mice, this analysis helps assess whether the gene can be studied *in vivo* using mouse models.
+Compares the selected  gene with the mouse genome to identify conserved regions and orthologous genes. Due to the strong genetic similarity between humans and mice, this analysis helps assess whether the gene can be studied *in vivo* using mouse models.
 
 ---
 
