@@ -18,6 +18,9 @@ library(openxlsx)
 library(future)
 library(future.apply)
 
+#### add docker?
+library(R.utils)
+
 ####$$$####
 library(stringr)
 ####$$$####
@@ -124,6 +127,198 @@ render_subject_alignment_html <- function(subject_seq, match_string) {
   paste0(out, collapse = "")
 }
 ###################
+
+# target region and tracnript
+annotate_general_knockdown_region <- function(target_annotation, txdb, ensembl_ID) {
+  if (nrow(target_annotation) == 0) {
+    return(target_annotation)
+  }
+  
+  # ---------------- selected gene transcripts ----------------
+  tx_df <- as.data.frame(
+    transcripts(txdb, columns = c("tx_id", "tx_name", "gene_id"))
+  )
+  
+  tx_df$gene_id_chr <- as.character(tx_df$gene_id)
+  tx_df <- tx_df[tx_df$gene_id_chr == ensembl_ID, , drop = FALSE]
+  
+  if (nrow(tx_df) == 0) {
+    target_annotation$region_class <- NA_character_
+    target_annotation$target_transcript <- NA_character_
+    return(target_annotation)
+  }
+  
+  tx_df$tx_id_chr <- as.character(tx_df$tx_id)
+  tx_df$tx_label <- ifelse(
+    is.na(tx_df$tx_name) | tx_df$tx_name == "",
+    tx_df$tx_id_chr,
+    as.character(tx_df$tx_name)
+  )
+  
+  tx_ids <- unique(tx_df$tx_id_chr)
+  gene_chr <- as.character(tx_df$seqnames[1])
+  gene_strand <- as.character(tx_df$strand[1])
+  
+  # ---------------- exons from selected gene transcripts ----------------
+  ex_df <- as.data.frame(exons(txdb, columns = c("tx_id", "exon_rank")))
+  
+  if (nrow(ex_df) > 0) {
+    ex_df$tx_id_chr <- as.character(ex_df$tx_id)
+    ex_df <- ex_df[ex_df$tx_id_chr %in% tx_ids, , drop = FALSE]
+    ex_df$tx_label <- tx_df$tx_label[match(ex_df$tx_id_chr, tx_df$tx_id_chr)]
+  }
+  
+  # ---------------- CDS from selected gene transcripts ----------------
+  cds_df <- as.data.frame(cds(txdb, columns = c("tx_id")))
+  
+  if (nrow(cds_df) > 0) {
+    cds_df$tx_id_chr <- as.character(cds_df$tx_id)
+    cds_df <- cds_df[cds_df$tx_id_chr %in% tx_ids, , drop = FALSE]
+    cds_df$tx_label <- tx_df$tx_label[match(cds_df$tx_id_chr, tx_df$tx_id_chr)]
+  }
+  
+  # ---------------- derive UTR intervals from exon minus CDS ----------------
+  make_utr_df <- function(ex_df, cds_df, tx_df, strand_value) {
+    if (nrow(ex_df) == 0 || nrow(cds_df) == 0) {
+      return(data.frame())
+    }
+    
+    out <- vector("list", 0)
+    
+    for (txid in unique(ex_df$tx_id_chr)) {
+      ex_tx <- ex_df[ex_df$tx_id_chr == txid, , drop = FALSE]
+      cds_tx <- cds_df[cds_df$tx_id_chr == txid, , drop = FALSE]
+      tx_row <- tx_df[tx_df$tx_id_chr == txid, , drop = FALSE]
+      
+      if (nrow(ex_tx) == 0 || nrow(cds_tx) == 0 || nrow(tx_row) == 0) next
+      
+      tx_label <- tx_row$tx_label[1]
+      cds_min <- min(cds_tx$start)
+      cds_max <- max(cds_tx$end)
+      
+      for (k in seq_len(nrow(ex_tx))) {
+        ex_start <- ex_tx$start[k]
+        ex_end <- ex_tx$end[k]
+        
+        # left genomic side of CDS
+        if (ex_start < cds_min) {
+          s <- ex_start
+          e <- min(ex_end, cds_min - 1)
+          if (s <= e) {
+            part <- if (strand_value == "+") "fiveUTR" else "threeUTR"
+            out[[length(out) + 1]] <- data.frame(
+              seqnames = as.character(ex_tx$seqnames[k]),
+              start = s,
+              end = e,
+              strand = as.character(ex_tx$strand[k]),
+              tx_id_chr = txid,
+              tx_label = tx_label,
+              utr_part = part,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+        
+        # right genomic side of CDS
+        if (ex_end > cds_max) {
+          s <- max(ex_start, cds_max + 1)
+          e <- ex_end
+          if (s <= e) {
+            part <- if (strand_value == "+") "threeUTR" else "fiveUTR"
+            out[[length(out) + 1]] <- data.frame(
+              seqnames = as.character(ex_tx$seqnames[k]),
+              start = s,
+              end = e,
+              strand = as.character(ex_tx$strand[k]),
+              tx_id_chr = txid,
+              tx_label = tx_label,
+              utr_part = part,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+      }
+    }
+    
+    if (length(out) == 0) {
+      return(data.frame())
+    }
+    
+    dplyr::bind_rows(out)
+  }
+  
+  utr_df <- make_utr_df(ex_df, cds_df, tx_df, gene_strand)
+  
+  # ---------------- annotate each ASO target site ----------------
+  target_annotation$region_class <- NA_character_
+  target_annotation$target_transcript <- NA_character_
+  
+  for (i in seq_len(nrow(target_annotation))) {
+    q_start <- target_annotation$chr_start[i]
+    q_end   <- target_annotation$chr_end[i]
+    
+    # 1) classify site in the selected gene:
+    # full containment in UTR > full containment in exon > otherwise intron
+    
+    in_utr <- FALSE
+    if (nrow(utr_df) > 0) {
+      utr_hit <- utr_df[
+        utr_df$seqnames == gene_chr &
+          utr_df$start <= q_start &
+          utr_df$end >= q_end,
+        ,
+        drop = FALSE
+      ]
+      in_utr <- nrow(utr_hit) > 0
+    }
+    
+    in_exon <- FALSE
+    if (nrow(ex_df) > 0) {
+      ex_hit <- ex_df[
+        as.character(ex_df$seqnames) == gene_chr &
+          ex_df$start <= q_start &
+          ex_df$end >= q_end,
+        ,
+        drop = FALSE
+      ]
+      in_exon <- nrow(ex_hit) > 0
+    }
+    
+    if (in_utr) {
+      target_annotation$region_class[i] <- "UTR"
+    } else if (in_exon) {
+      target_annotation$region_class[i] <- "Exonic"
+    } else {
+      target_annotation$region_class[i] <- "Intronic"
+    }
+    
+    # 2) transcript presence:
+    # only transcripts of THIS gene where the full target site is inside one exon
+    tx_present <- character(0)
+    
+    if (nrow(ex_df) > 0) {
+      ex_hit_tx <- ex_df[
+        as.character(ex_df$seqnames) == gene_chr &
+          ex_df$start <= q_start &
+          ex_df$end >= q_end,
+        ,
+        drop = FALSE
+      ]
+      
+      if (nrow(ex_hit_tx) > 0) {
+        tx_present <- unique(ex_hit_tx$tx_label)
+      }
+    }
+    
+    target_annotation$target_transcript[i] <- if (length(tx_present) > 0) {
+      paste(tx_present, collapse = "; ")
+    } else {
+      NA_character_
+    }
+  }
+  
+  target_annotation
+}
 
 # helper function for vcf and bcf file input for patient design
 ####$$$####
@@ -709,22 +904,26 @@ function(input, output, session) {
   
   gggenome_available <- reactiveVal(NULL)
   
-  observeEvent(TRUE, {
-    available <- check_gggenome()
+  observeEvent(TRUE, {available <- check_gggenome()
+    
     gggenome_available(available)
     
     if (isTRUE(available)) {
+      
       showNotification(
         "GGGenome is available.",
         type = "message",
         duration = 20
       )
+      
     } else {
+      
       showNotification(
         "GGGenome is currently unavailable. Running the script might lead to a crash/disconnect.",
         type = "error",
         duration = NULL
       )
+      
     }
     
   }, once = TRUE)
@@ -1355,6 +1554,12 @@ function(input, output, session) {
       
       # ----------------------------------- milestone 15 ---------------------------
       print("milestone 15: Corrected start en end cord based on direction")
+
+      target_annotation <- annotate_general_knockdown_region(
+        target_annotation = target_annotation,
+        txdb = txdb_hsa,
+        ensembl_ID = ensembl_ID
+      )
       
       # Keep unique names only and extract
       # Information base on chr_start from target.
@@ -1964,6 +2169,8 @@ function(input, output, session) {
           "n_distance_0",
           "n_distance_1",
           "n_distance_2",
+          "region_class",
+          "target_transcript",
           "sec_energy",
           "duplex_energy",
           "motif_cor_score",
@@ -2000,6 +2207,8 @@ function(input, output, session) {
           n_distance_1           = "Off-targets 1 mismatch (GGGenome)",
           n_distance_2           = "Off-targets 2 mismatches (GGGenome)",
           n_distance_0           = "Perfect matches (GGGenome)",
+          region_class           = "Target region",
+          target_transcript      = "Target transcript(s)",
           sec_energy             = "ASO self-folding energy",
           duplex_energy          = "ASO duplex energy",
           max_pLI                = "Max. off-target pLI",
@@ -2730,7 +2939,7 @@ function(input, output, session) {
         output = output,
         session = session,
         table_id = "results1",
-        table_data = results1_lookup,
+        table_data_reactive = results1_lookup,
         off_targets_total = off_targets_total,
         selected_target = selected_target,
         oligo_sequence = oligo_sequence,

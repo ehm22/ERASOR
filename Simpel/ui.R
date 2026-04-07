@@ -7,7 +7,7 @@ library(bslib)
 ##&*## just to troll annelot
 
 # if this is TRUE the patient specific tab will show, if FALSE then the tab is hidden
-show_patient_tab <- TRUE 
+show_patient_tab <- FALSE 
 
 ### for sliders with numeric input boxes
 rangeFilterUI <- function(
@@ -20,7 +20,7 @@ rangeFilterUI <- function(
     fixed = c("none", "left", "right"),
     label_from = "From:",
     label_to = "To:",
-    label_left = "Less or equal to:",
+    label_left = "Keep ASOs with a value lower than:",
     label_right = "Greater or equal to:"
 ) {
   
@@ -70,7 +70,7 @@ ui <- fluidPage(
     id = "app_startup_loading",
     div(
       id = "app_startup_loading_box",
-      span("Please wait. Loading"),
+      span(id = "startup_loading_text", "Please wait. Loading"),
       span(id = "loading_dots", ".")
     )
   ),
@@ -472,7 +472,7 @@ ui <- fluidPage(
                             label = NULL,
                             min   = 0,
                             max   = 50,
-                            value = 10,
+                            value = 5,
                             step  = 1,
                             fixed = "left",
                             label_left = "Maximum number of off-targets with 1 mismatch"
@@ -913,19 +913,44 @@ ui <- fluidPage(
   ),
   
   tags$script(HTML("
-    var loadingDotsInterval = setInterval(function() {
-      var el = document.getElementById('loading_dots');
-      if (!el) return;
+  var loadingDotsInterval = setInterval(function() {
+    var el = document.getElementById('loading_dots');
+    if (!el) return;
 
-      if (el.textContent === '.') {
-        el.textContent = '..';
-      } else if (el.textContent === '..') {
-        el.textContent = '...';
-      } else {
-        el.textContent = '.';
-      }
-    }, 500);
-  ")),
+    if (el.textContent === '.') {
+      el.textContent = '..';
+    } else if (el.textContent === '..') {
+      el.textContent = '...';
+    } else {
+      el.textContent = '.';
+    }
+  }, 500);
+
+  setTimeout(function() {
+
+    var txt = document.getElementById('startup_loading_text');
+    var dots = document.getElementById('loading_dots');
+    var box = document.getElementById('app_startup_loading_box');
+
+    /* stop the dot animation */
+    clearInterval(loadingDotsInterval);
+
+    if (txt) {
+      txt.textContent = 'GGGenome is unavailable. Please try again another time.';
+    }
+
+    if (dots) {
+      dots.textContent = '';
+    }
+
+    if (box) {
+      box.style.background = '#f2dede';
+      box.style.border = '1px solid #ebccd1';
+      box.style.color = '#a94442';
+    }
+
+  }, 60000);
+")),
   
   tags$script(
     HTML('$(function () { $("[data-toggle=\'tooltip\']").tooltip(); });')
