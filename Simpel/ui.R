@@ -7,7 +7,7 @@ library(bslib)
 ##&*## just to troll annelot
 
 # if this is TRUE the patient specific tab will show, if FALSE then the tab is hidden
-show_patient_tab <- FALSE 
+show_patient_tab <- TRUE 
 
 ### for sliders with numeric input boxes
 rangeFilterUI <- function(
