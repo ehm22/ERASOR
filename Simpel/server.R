@@ -1489,33 +1489,8 @@ function(input, output, session) {
         NA_integer_
       }
       
-      filter_numbers <- tibble(
-        metric = c(
-          "Prefiltered",
-          "ASO ending with G",
-          "Tox score",
-          "GC content",
-          "PM frequency",
-          "Accessibility"
-        ),
-        count = c(
-          nseq_prefilter,
-          nseq_ending_G,
-          nseq_toxscore,
-          nseq_gc,
-          nseq_pmfreq,
-          nseq_accessible
-        )
-      )
       
-      output$unfiltered_results_table <- renderDT ({
-        datatable(
-          filter_numbers,
-          rownames = FALSE,
-          options = list(dom = "t", ordering = FALSE),
-          class = "compact stripe"
-        )
-      })
+     
       
       # ----------------------------------- filtering ------------------------------
       
@@ -1804,8 +1779,13 @@ function(input, output, session) {
           destfile = tmp,
           mode = "wb"
         )
-        gnomad_df <- read_tsv(tmp, show_col_types = FALSE,
-                              col_select = c(gene, transcript, oe_lof))
+        
+        gnomad_df <- read_tsv(
+          tmp,
+          show_col_types = FALSE,
+          col_select = c(gene, transcript, pLI, oe_lof_upper)
+        )
+        
         unlink(tmp)
         
         # ----------------------------------- milestone 24 ---------------------------
@@ -1828,14 +1808,25 @@ function(input, output, session) {
           )
         
         # 2. Per name de laagste oe_lof score bepalen
-        oe_lof_min <- off_targets_total %>%
+        #####&*#####
+        # oe_lof_min <- off_targets_total %>%
+        #   filter(distance <= 1) %>%
+        #   group_by(name) %>%
+        #   summarise(min_oe_lof = min(oe_lof, na.rm = TRUE), .groups = "drop")
+        #####&*#####
+        
+        minloeuf_maxpli <- off_targets_total %>%
           filter(distance <= 1) %>%
           group_by(name) %>%
-          summarise(min_oe_lof = min(oe_lof, na.rm = TRUE), .groups = "drop")
+          summarise(
+            max_pLI = if (all(is.na(pLI))) NA_real_ else max(pLI, na.rm = TRUE),
+            min_LOEUF = if (all(is.na(oe_lof_upper))) NA_real_ else min(oe_lof_upper, na.rm = TRUE),
+            .groups = "drop"
+          )
         
         # 3. Deze twee samenvattingen samenvoegen tot één tabel per name
         off_summary <- dist_counts %>%
-          left_join(oe_lof_min, by = "name")
+          left_join(minloeuf_maxpli, by = "name")
         
         # 4. Met left_join koppelen aan target_annotation op oligo_seq = name
         target_annotation <- target_annotation %>%
@@ -1889,6 +1880,58 @@ function(input, output, session) {
       }
       
       
+      # fitlering table
+      # number of ASOs that actually end up in the main results table
+      n_final_selection <- nrow(target_annotation)
+      
+      filter_numbers <- tibble(
+        Filter = c(
+          "Prefiltered",
+          "ASO ending with G",
+          "Tox score",
+          "GC content",
+          "PM frequency",
+          "Final selection"
+        ),
+        `Number of ASOs erased` = c(
+          nseq_prefilter,
+          nseq_ending_G,
+          nseq_toxscore,
+          nseq_gc,
+          nseq_pmfreq,
+          n_final_selection
+        ),
+        Percentage = c(
+          "100%",
+          paste0(round(100 * nseq_ending_G / nseq_prefilter), "%"),
+          paste0(round(100 * nseq_toxscore / nseq_prefilter), "%"),
+          paste0(round(100 * nseq_gc / nseq_prefilter), "%"),
+          paste0(round(100 * nseq_pmfreq / nseq_prefilter), "%"),
+          paste0(formatC(100 * n_final_selection / nseq_prefilter, format = "f", digits = 2), "%")
+        )
+      )
+      
+      output$unfiltered_results_table <- renderDT({
+        datatable(
+          filter_numbers,
+          rownames = FALSE,
+          options = list(
+            dom = "t",
+            ordering = FALSE
+          ),
+          class = "compact stripe"
+        ) %>%
+          formatStyle(
+            names(filter_numbers),
+            textAlign = "center"
+          ) %>%
+          formatStyle(
+            "Filter",
+            target = "row",
+            fontWeight = styleEqual("Final selection", "bold")
+          )
+      })
+      
       # Render the tables.
       ################ make download table identical to viewed table
       results1_lookup <- reactive({
@@ -1921,11 +1964,11 @@ function(input, output, session) {
           "n_distance_0",
           "n_distance_1",
           "n_distance_2",
-          # "pli_score",
           "sec_energy",
           "duplex_energy",
           "motif_cor_score",
-          "min_oe_lof",
+          "max_pLI",
+          "min_LOEUF",
           "conserved_in_mmusculus",
           "CGs",
           "chr_start",
@@ -1936,6 +1979,8 @@ function(input, output, session) {
           "gene_hits_pm",
           "gene_hits_1mm",
           "NoRepeats",
+          "sec_energy",
+          "duplex_energy",
           "accessibility"
         )
         
@@ -1957,7 +2002,8 @@ function(input, output, session) {
           n_distance_0           = "Perfect matches (GGGenome)",
           sec_energy             = "ASO self-folding energy",
           duplex_energy          = "ASO duplex energy",
-          min_oe_lof             = "Min. off-target LoF",
+          max_pLI                = "Max. off-target pLI",
+          min_LOEUF              = "Min. off-target LOEUF",
           motif_cor_score        = "Motif correlation score",
           conserved_in_mmusculus = "Conserved in mouse",
           CGs                    = "Number of CpGs",
@@ -2202,7 +2248,8 @@ function(input, output, session) {
               "deletions",
               "insertions",
               "offtarget_accessibility",
-              "oe_lof"
+              "pLI",
+              "oe_lof_upper"
             )),
             dplyr::everything()
           )
@@ -2215,10 +2262,11 @@ function(input, output, session) {
           off_target_nt_length    = "Length (nt)",
           distance                = "Number of Mismatches/Indels",
           mismatches              = "Mismatches",
-          deletions               = "Deletions",
-          insertions              = "Insertions",
+          deletions               = "Insertions", # these are flipped bc it is the easiest way to swicth from query insertions to subject deletion
+          insertions              = "Deletions",
           offtarget_accessibility = "Accessibility (off-target)",
-          oe_lof                  = "GnomAD oe_lof"
+          pLI                     = "GnomAD pLI",
+          oe_lof_upper            = "GnomAD LOEUF"
         )
         
         nm <- names(df_view)
@@ -2230,14 +2278,6 @@ function(input, output, session) {
           dist_idx <- which(grepl("^Number of Mismatches/Indels", names(df_view)))[1]
         }
         distance_col <- dist_idx - 1
-        ####&*####
-      #   DT::datatable(
-      #     df_view,
-      #     rownames = FALSE,
-      #     options = list(order = list(list(distance_col, "asc")))
-      #   )
-      # })
-        ####&*#### 
         
         dt <- DT::datatable(
           df_view,
@@ -2496,12 +2536,12 @@ function(input, output, session) {
         output$cleavage_visual <- renderUI({
           HTML(
             paste0(
-              "<h5>Oligo sequence (ASO): </h5>",
-              "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
+              "<h5 style='margin-top:0;'>Oligo sequence (ASO): </h5>",
+              "<div style='font-family: monospace; white-space: pre; font-size: 20px; line-height: 1.7;'>",
               oligo_visual_fw,
               "</div>",
-              "<h5>RNA sequence: </h5>",
-              "<div style='font-family: monospace; white-space: pre; font-size: 18px;'>",
+              "<h5 style='margin-bottom:6px;'>RNA sequence: </h5>",
+              "<div style='font-family: monospace; white-space: pre; font-size: 20px; line-height: 1.7;'>",
               rna_visual_rv,
               "</div>"
             )
@@ -2596,6 +2636,8 @@ function(input, output, session) {
             mod_5prime = 5,
             mod_3prime = 5
           )
+          
+          rnaseh_stored(rnaseh_data)
           
           output$rnaseh_title <- renderText(
             paste0("RNase H results for: ", row_data$name[[1]])

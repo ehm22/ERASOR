@@ -7,7 +7,7 @@ library(bslib)
 ##&*## just to troll annelot
 
 # if this is TRUE the patient specific tab will show, if FALSE then the tab is hidden
-show_patient_tab <- FALSE 
+show_patient_tab <- TRUE 
 
 ### for sliders with numeric input boxes
 rangeFilterUI <- function(
@@ -97,6 +97,22 @@ ui <- fluidPage(
           display: flex;
           align-items: center;
           justify-content: center;
+        }
+        
+        /* rows clickable */
+          table.dataTable tbody tr {
+          cursor: pointer;
+          transition: background-color 0.15s ease;
+        }
+
+        /* hover highlight */
+          table.dataTable tbody tr:hover {
+          background-color: #e8f4ff !important;
+          }
+        
+        /* center DT column headers */
+            table.dataTable thead th {
+           text-align: center !important;
         }
 
         #app_startup_loading_box {
@@ -588,53 +604,70 @@ ui <- fluidPage(
                 
                 fluidRow(
                   column(
-                    6,
-                    numericInput(
-                      "mod_5prime",
-                      label = tagList(
-                        "Amount of modified nucleotides at the 5' end  ",
-                        tags$span(
-                          tags$img(src = "questionmark.png", height = "20px"),
-                          title = "This setting adds modifications to the 5' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 2 modified nucleotides on the 3' end of the target mRNA is allowed.",
-                          `data-toggle` = "tooltip",
-                          style = "cursor: pointer;"
-                        )
+                    width = 4,
+                    div(
+                      style = "max-width: 320px;",
+                      
+                      numericInput(
+                        "mod_5prime",
+                        label = tagList(
+                          "Amount of modified nucleotides at the 5' end  ",
+                          tags$span(
+                            tags$img(src = "questionmark.png", height = "20px"),
+                            title = "This setting adds modifications to the 5' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 2 modified nucleotides on the 3' end of the target mRNA is allowed.",
+                            `data-toggle` = "tooltip",
+                            style = "cursor: pointer;"
+                          )
+                        ),
+                        value = 5,
+                        min = 0,
+                        max = 10,
+                        width = "260px"
                       ),
-                      value = 5,
-                      min = 0,
-                      max = 10,
-                      width = "60%"
+                      
+                      numericInput(
+                        "mod_3prime",
+                        label = tagList(
+                          "Amount of modified nucleotides at the 3' end  ",
+                          tags$span(
+                            tags$img(src = "questionmark.png", height = "20px"),
+                            title = "This setting adds modifications to the 3' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 4 modified nucleotides on the 5' end of the target mRNA is allowed.",
+                            `data-toggle` = "tooltip",
+                            style = "cursor: pointer;"
+                          )
+                        ),
+                        value = 5,
+                        min = 0,
+                        max = 10,
+                        width = "260px"
+                      ),
+                      
+                      div(
+                        style = "margin-top: 10px;",
+                        actionButton("add_mods", "Apply end modifications", class = "btn-primary")
+                      ),
+                      div(
+                        style = "margin-top: 10px;",
+                        downloadButton("download_rnaseh", "Download results")
+                      )
                     )
                   ),
+                  
                   column(
-                    6,
-                    numericInput(
-                      "mod_3prime",
-                      label = tagList(
-                        "Amount of modified nucleotides at the 3' end  ",
-                        tags$span(
-                          tags$img(src = "questionmark.png", height = "20px"),
-                          title = "This setting adds modifications to the 3' end of the ASO sequence, which affect the accessible binding sites on the target mRNA. An overlap of up to 4 modified nucleotides on the 5' end of the target mRNA is allowed.",
-                          `data-toggle` = "tooltip",
-                          style = "cursor: pointer;"
-                        )
-                      ),
-                      value = 5,
-                      min = 0,
-                      max = 10,
-                      width = "60%"
+                    width = 8,
+                    div(
+                      style = "margin-top: -8px; display: flex; justify-content: flex-end;",
+                      div(
+                        style = "width: 620px; max-width: 100%; min-height: 170px; padding: 12px 18px; border: 1px solid #ddd; border-radius: 6px; background-color: #fafafa;",
+                        h3("Visualised cleavage site:", style = "margin-top: 0; margin-bottom: 10px;"),
+                        uiOutput("cleavage_visual")
+                      )
                     )
                   )
                 ),
-                actionButton("add_mods", "Apply end modifications", class = "btn-primary"),
-                hr(),
                 
-                downloadButton("download_rnaseh", "Download results", style = "margin-bottom: 15px;"),
-                dataTableOutput("rnaseh_results"),
                 hr(),
-                
-                h3("Visualised cleavage site: "),
-                uiOutput("cleavage_visual")
+                dataTableOutput("rnaseh_results")
               ),
               
               tabPanel(
