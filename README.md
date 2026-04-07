@@ -1,4 +1,4 @@
-# ERASOR - Erasmus ASO designer
+# ERASOR - Erasmus ASO selector
 
 ## Table of contents
 - [🧬 Introduction](#introduction)
@@ -24,13 +24,15 @@
 
 
 ## 🧬 Introduction
-Erasmus ASO designer (ERASOR) is an Antisense oligo sequence design tool for RNase H1 mediated mRNA degradation. The effectiveness of an ASO to silence a given gene is predicated on many different variables. ERASOR gives insight into what ASOs will and will not be worth testing in the lab. In silico prediction is much easier and faster than lab work. With this in mind, ERASOR is meant to be used as a first step in an ASO drug development pipeline.
+Erasmus ASO selector (ERASOR) is a tool to help in selecting Antisense Oligonucleotides (ASOs) for a specific gene via RNase H1 mediated mRNA degradation. The effectiveness of an ASO to reduce target geen expression is dependent on many different variables. ERASOR gives insight into which ASOs are promising candidates to test experimentally in the lab as well as giving information about already used ASOs. In-silico predicition reduces the maount of time and costs for designing ASOs. With this in mind, ERASOR is meant to be used as a first step in an ASO drug development pipeline.
 
 
 ## Setup guide
 ### 👥 Regular user setup (Shiny server only)
 
-This section is for end-users who only need to run the Shiny application. No RStudio or Git setup is required. This setup uses podman to install, please install podman before proceeding. https://podman.io/ You only need to download the CLI, downloading the desktop version is not necessary.
+This section is for end-users who only need to run the Shiny application. No RStudio or Git setup is required. This setup uses podman to install, please install podman before proceeding. https://podman.io/ 
+
+You only need to download the CLI, downloading the desktop version is **NOT** necessary.
 
 Enter the following commands in either Windows Powershell, macOS Terminal or Linux environment. You can copy/paste all of the commands.
 
@@ -118,8 +120,8 @@ This section is for developers contributing to the project.
 Clone this git repository and navigate to the application folder.
 
 ```
-git clone https://github.com/JimReijnhoudt/ASOstool-v2.git
-cd ASOstool-v2
+git clone https://github.com/ehm22/ERASOR.git
+cd ERASOR
 ```
 
 Optional: Add OMIM key to OMIM_key file (see request information above):
@@ -130,13 +132,13 @@ echo EXAMPLE_OMIM_KEY > OMIM_key
 #### 2. Build the Docker image 
 
 ```
-docker build -t asostoolv2 .
+docker build -t erasor .
 ```
 
 #### 3. Create a persistent volume for RStudio home
 
 ```
-docker volume create rstudio-home
+podman volume create rstudio-home
 ```
 
 #### 4. Start the development container
@@ -149,16 +151,18 @@ Mount:
 
 On Linux/Mac:
 ```         
-docker run -d \
+podman run -d \
+  --name erasor-dev \
   -p 8787:8787 \
   -p 3838:3838 \
-  -v $(pwd):/home/rstudio/ASOstool-v2 \
-  -v $(pwd):/srv/shiny-server/ASOstool-v2 \
   -v rstudio-home:/home/rstudio \
-  asostoolv2
+  -v erasor-code:/home/rstudio/ERASOR \
+  -v erasor-code:/srv/shiny-server/ERASOR
+  erasor
+
 ```
 
-On Windows (Powershell):
+On Windows (Powershell): (not corrected yet)
 ```
 docker run -d `
   -p 8787:8787 `
@@ -181,7 +185,7 @@ Credentials:
 
 #### 6. Create a new R-studio project
 
-**Create a project** in R-studio > By directory > Select ASOstool-v2 directory.
+**Create a project** in R-studio > By directory > Select ERASOR directory.
 
 #### 7. Set up SSH keys (first time only)
 
@@ -225,8 +229,9 @@ These persist thanks to the rstudio-home volume.
 If your remote url is set trough https you need to switch to SSH
 
 ```
-cd /home/rstudio/ASOstool-v2
-git remote set-url origin git@github.com:JimReijnhoudt/ASOstool-v2.git
+cd /home/rstudio/ERASOR
+git remote set-url origin git@github.com:ehm22/ERASOR.git
+
 ```
 
 Check:
@@ -238,8 +243,8 @@ git remote -v
 You should now see:
 
 ```
-origin  git@github.com:JimReijnhoudt/ASOstool-v2.git (fetch)
-origin  git@github.com:JimReijnhoudt/ASOstool-v2.git (push)
+origin  git@github.com:ehm22/ERASOR.git (fetch)
+origin  git@github.com:ehm22/ERASOR.git (push)
 ```
 
 Now the Push and Pull buttons in RStudio Git tab become active.
@@ -258,19 +263,25 @@ Stop the container after you're done to free up ports.
 List running containers:
 
 ```
-docker ps
+podman ps
 ```
 
 Stop it:
 
 ```
-docker stop <container_id>
+podman stop <container_id>
 ```
 
-Remove it (optional):
+Remove it:
 
 ```
-docker rm <container_id>
+podman rm <container_id>
+```
+
+If you want to stop and remove all containers: 
+```
+podman stop -a
+podman rm -a
 ```
 ---
 ### ✔ Setup Summary Table
