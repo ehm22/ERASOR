@@ -35,6 +35,14 @@ You only need to download the CLI, downloading the desktop version is **NOT** ne
 
 Enter the following commands in either Windows Powershell, macOS Terminal or Linux environment. You can copy/paste all of the commands.
 
+#### 0. Install git
+Git is usually installed per default in macOS and Linux. For Windows users please install git via this command. (Optionally you can also download from the website if preferred https://git-scm.com/install/windows ) 
+
+```
+winget install --id Git.Git -e --source winget
+```
+After installing via command, you may need to close and re-open Powershell.
+
 #### 1. Clone git repo
 Clone this git repository and navigate to the application folder.
 
