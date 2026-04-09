@@ -164,7 +164,7 @@ podman run -d \
   -p 3838:3838 \
   -v rstudio-home:/home/rstudio \
   -v erasor-code:/home/rstudio/ERASOR \
-  -v erasor-code:/srv/shiny-server/ERASOR
+  -v erasor-code:/srv/shiny-server/ERASOR \
   erasor
 
 ```
