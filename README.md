@@ -35,7 +35,7 @@ You only need to download the CLI, downloading the desktop version is **NOT** ne
 
 Enter the following commands in either Windows Powershell, macOS Terminal or Linux environment. You can copy/paste all of the commands.
 
-#### 0. Install git
+#### 0. Install git (only needs to be done once)
 Git is usually installed per default in macOS and Linux. For Windows users please install git via this command. (Optionally you can also download from the website if preferred https://git-scm.com/install/windows ) 
 
 ```
@@ -43,7 +43,7 @@ winget install --id Git.Git -e --source winget
 ```
 After installing via command, you may need to close and re-open Powershell.
 
-#### 1. Clone git repo
+#### 1. Clone git repo (only needs to be done once)
 Clone this git repository and navigate to the application folder.
 
 ```
@@ -55,7 +55,7 @@ Optional: Add OMIM key to OMIM_key file (see request information above):
 echo EXAMPLE_OMIM_KEY > OMIM_key
 ```
 
-#### 2. Build the Docker image 
+#### 2. Build the Docker image (only needs to be done once)
 
 ```
 podman build -t erasor .
@@ -88,7 +88,7 @@ Open:
 
 You're done!
 
-#### 5. Stop the container
+#### 5. Stop the container 
 
 Stop the container after you're done to free up ports.
 Also stop the previous container before launching a new one.
