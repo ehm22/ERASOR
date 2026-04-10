@@ -18,12 +18,12 @@ library(openxlsx)
 library(future)
 library(future.apply)
 
-#### add docker?
+# add docker?
 library(R.utils)
 
-####$$$####
+#$$$#
 library(stringr)
-####$$$####
+#$$$#
 
 source("../tools/GGGenome_functions.R")
 source("../tools/RNaseH_script.R")
@@ -38,23 +38,24 @@ if (.Platform$OS.type == "windows") {
 }
 options(future.globals.maxSize = 6 * 1024^3, shiny.maxRequestSize = 8 * 1024^3)
 
-# Helper function to track time of the run---------------------------------------
-format_elapsed <- function(start_time, end_time = Sys.time()) {
-  elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
-  
-  hours   <- floor(elapsed / 3600)
-  minutes <- floor((elapsed %% 3600) / 60)
-  seconds <- floor(elapsed %% 60)
-  
-  parts <- c()
-  if (hours > 0)   parts <- c(parts, sprintf("%dh", hours))
-  if (minutes > 0) parts <- c(parts, sprintf("%dm", minutes))
-  parts <- c(parts, sprintf("%ds", seconds))  
-  
-  paste(parts, collapse = " ")
-}
+# Functions not included in computation ----------------------------------------
+## Track time elapsed during the run -------------------------------------------
+  format_elapsed <- function(start_time, end_time = Sys.time()) {
+    elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
+    
+    hours   <- floor(elapsed / 3600)
+    minutes <- floor((elapsed %% 3600) / 60)
+    seconds <- floor(elapsed %% 60)
+    
+    parts <- c()
+    if (hours > 0)   parts <- c(parts, sprintf("%dh", hours))
+    if (minutes > 0) parts <- c(parts, sprintf("%dm", minutes))
+    parts <- c(parts, sprintf("%ds", seconds))  
+    
+    paste(parts, collapse = " ")
+  }
 
-# Helper function for renaming coumsn in RnaseH table
+## Renaming RnaseH table columns -----------------------------------------------
 
 rename_rnaseh_cols <- function(df) {
   display_map <- c(
@@ -69,8 +70,27 @@ rename_rnaseh_cols <- function(df) {
   df
 }
 
-##############
-# helper function to get output seqeunces from ggenome
+## Hint boxes for columns in main table-----------------------------------------
+col_with_tooltip <- function(label, tooltip) {
+  paste0(
+    "<span class='col-header-with-tooltip'>",
+    "<span>", label, "</span>",
+    "<span class='tooltip-icon'>",
+    "<img src='questionmark.png' height='14px'>",
+    "<span class='custom-tooltip'>",
+    tooltip,
+    "</span>",
+    "</span>",
+    "</span>"
+  )
+}
+
+strip_header_html <- function(x) {
+  x <- gsub("<span class='custom-tooltip'>.*?</span>", "", x, perl = TRUE)
+  x <- gsub("<[^>]+>", "", x, perl = TRUE)
+  trimws(x)
+}
+## Creating off-target sequences with annotated indels/mismatches --------------
 render_subject_alignment_html <- function(subject_seq, match_string) {
   s_raw <- gsub("-", "", as.character(subject_seq))
   s <- strsplit(s_raw, "")[[1]]
@@ -414,7 +434,7 @@ get_vcf_samples <- function(variant_path) {
 
 classify_variant_type <- function(ref, alt) {
   if (grepl(",", alt, fixed = TRUE)) {
-    return("multiallelic")
+    return("Multiallelic")
   }
   
   if (grepl("^<", alt)) {
@@ -426,11 +446,11 @@ classify_variant_type <- function(ref, alt) {
   }
   
   if (nchar(ref) < nchar(alt)) {
-    return("insertion")
+    return("Insertion")
   }
   
   if (nchar(ref) > nchar(alt)) {
-    return("deletion")
+    return("Deletion")
   }
   
   if (nchar(ref) == nchar(alt) && nchar(ref) > 1) {
@@ -1154,25 +1174,49 @@ function(input, output, session) {
   
   # Disable filters when selecting single ASO input
   
-  observeEvent(input$single_aso_input, ignoreInit = TRUE, {
-    updateCheckboxInput(session, "perfect_input",  value = FALSE)
-    updateCheckboxInput(session, "mismatch_input", value = FALSE)
-    updateCheckboxInput(session, "Poly_input", value = FALSE)
-    updateCheckboxInput(session, "tox_input", value = FALSE)
-    updateCheckboxInput(session, "Accessibility_input", value = FALSE)
-    updateCheckboxInput(session, "gc_input", value = FALSE)
-  })
-  
-  # Enable filters when disabling single ASO input
-  
-  observeEvent(input$single_aso_input, ignoreInit = TRUE, {
-    if (!isTRUE(input$single_aso_input)) {
+  observeEvent(input$single_aso_input, ignoreInit = FALSE, {
+    
+    if (isTRUE(input$single_aso_input)) {
+      
+      updateCheckboxInput(session, "perfect_input",  value = FALSE)
+      updateCheckboxInput(session, "mismatch_input", value = FALSE)
+      updateCheckboxInput(session, "Poly_input",     value = FALSE)
+      updateCheckboxInput(session, "tox_input",      value = FALSE)
+      updateCheckboxInput(session, "gc_input",       value = FALSE)
+      
+      updateCheckboxInput(session, "ASO_ending_G",    value = FALSE)
+      updateCheckboxInput(session, "Conserved_input", value = FALSE)
+      
+      # disable actual inputs
+      shinyjs::disable("filters")
+      shinyjs::disable("non-numeric_filters")
+      shinyjs::disable("oligo_length_range")
+      
+      # grey out full sections including titles
+      shinyjs::addClass("filters", "disabled-section")
+      shinyjs::addClass("non-numeric_filters", "disabled-section")
+      shinyjs::addClass("oligo_length_block", "disabled-section")
+      
+    } else {
+      
       updateCheckboxInput(session, "perfect_input",  value = TRUE)
       updateCheckboxInput(session, "mismatch_input", value = TRUE)
-      updateCheckboxInput(session, "Poly_input", value = TRUE)
-      updateCheckboxInput(session, "tox_input", value = TRUE)
-      updateCheckboxInput(session, "Accessibility_input", value = TRUE)
-      updateCheckboxInput(session, "gc_input", value = TRUE)
+      updateCheckboxInput(session, "Poly_input",     value = TRUE)
+      updateCheckboxInput(session, "tox_input",      value = TRUE)
+      updateCheckboxInput(session, "gc_input",       value = TRUE)
+      
+      updateCheckboxInput(session, "ASO_ending_G",    value = TRUE)
+      updateCheckboxInput(session, "Conserved_input", value = FALSE)
+      
+      # enable actual inputs
+      shinyjs::enable("filters")
+      shinyjs::enable("non-numeric_filters")
+      shinyjs::enable("oligo_length_range")
+      
+      # remove grey styling
+      shinyjs::removeClass("filters", "disabled-section")
+      shinyjs::removeClass("non-numeric_filters", "disabled-section")
+      shinyjs::removeClass("oligo_length_block", "disabled-section")
     }
   })
   
@@ -1198,11 +1242,17 @@ function(input, output, session) {
     shinyjs::reset("filters")
   })
   
+  # Disable extend data button until table appears
+  
+  observe({
+    shinyjs::disable("toggle_cols")
+  })
+  
   # sliding filter with numeric boxes
   tox_range <- rangeFilterServer("tox_score",    0, 136, fixed = "right")
   gc_range  <- rangeFilterServer("gc_content",   0, 100, fixed = "none")
   pm_range  <- rangeFilterServer("pm_freq",      0, 1,   fixed = "left")
-  acc_range <- rangeFilterServer("accessibility",0, 1,   fixed = "none")
+  # acc_range <- rangeFilterServer("accessibility",0, 1,   fixed = "none")
   perf_range <- rangeFilterServer("perfect_hits", 0, 200, fixed = "left")
   mm_range   <- rangeFilterServer("mismatch_hits",0, 500, fixed = "left")
   
@@ -1679,21 +1729,21 @@ function(input, output, session) {
         NA_integer_
       }
       
-      
-      nseq_accessible <- if (isTRUE(input$linux_input)) {
-        acc_rng <- acc_range()
-        nseq_prefilter - nrow(
-          target_annotation %>%
-            dplyr::filter(
-              !is.na(accessibility),
-              accessibility >= acc_rng[1],
-              accessibility <= acc_rng[2]
-            )
-        )
-      } else {
-        NA_integer_
-      }
-      
+      # remove accessibiility as filter but keep as output
+      # nseq_accessible <- if (isTRUE(input$linux_input)) {
+      #   acc_rng <- acc_range()
+      #   nseq_prefilter - nrow(
+      #     target_annotation %>%
+      #       dplyr::filter(
+      #         !is.na(accessibility),
+      #         accessibility >= acc_rng[1],
+      #         accessibility <= acc_rng[2]
+      #       )
+      #   )
+      # } else {
+      #   NA_integer_
+      # }
+      # 
       
      
       
@@ -1761,26 +1811,27 @@ function(input, output, session) {
       ###
       
       # 3) accessibility filter (alleen als linux + checkbox aanstaan)
-      if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
-        ta_prev <- ta
-        if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
-          ta_prev <- ta
-          rng <- acc_range()
-          ta <- apply_range(ta, "accessibility", rng)
-          
-          if (nrow(ta) == 0) {
-            ta <- ta_prev
-            showNotification("Filter 'accessibility' removed all rows; reverting.", type = "warning")
-          }
-        }
-        
-        if (nrow(ta) == 0) {
-          ta <- ta_prev
-          message("Filter 'accessibility' removed all rows; reverting to previous dataset.")
-          showNotification("Filter 'accessibility' removed all rows; reverting to previous dataset.", type = "warning")
-        }
-      }
-      
+      # remove accessibiltiy as filter but keep as output
+      # if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
+      #   ta_prev <- ta
+      #   if (isTRUE(input$linux_input) && isTRUE(input$Accessibility_input)) {
+      #     ta_prev <- ta
+      #     rng <- acc_range()
+      #     ta <- apply_range(ta, "accessibility", rng)
+      #     
+      #     if (nrow(ta) == 0) {
+      #       ta <- ta_prev
+      #       showNotification("Filter 'accessibility' removed all rows; reverting.", type = "warning")
+      #     }
+      #   }
+      #   
+      #   if (nrow(ta) == 0) {
+      #     ta <- ta_prev
+      #     message("Filter 'accessibility' removed all rows; reverting to previous dataset.")
+      #     showNotification("Filter 'accessibility' removed all rows; reverting to previous dataset.", type = "warning")
+      #   }
+      # }
+      # 
       # 4) polymorphism NA->0 (geen filter; alleen transform)
       if (isTRUE(input$polymorphism_input)) {
         ta <- ta %>%
@@ -2171,8 +2222,6 @@ function(input, output, session) {
           "n_distance_2",
           "region_class",
           "target_transcript",
-          "sec_energy",
-          "duplex_energy",
           "motif_cor_score",
           "max_pLI",
           "min_LOEUF",
@@ -2210,7 +2259,9 @@ function(input, output, session) {
           region_class           = "Target region",
           target_transcript      = "Target transcript(s)",
           sec_energy             = "ASO self-folding energy",
-          duplex_energy          = "ASO duplex energy",
+          duplex_energy          = col_with_tooltip(
+            "ASO duplex energy",
+            "Predicted energy needed to break the binding between two ASOs. More negative values generally indicate stronger binding, which is unfavorable for ASO design."),
           max_pLI                = "Max. off-target pLI",
           min_LOEUF              = "Min. off-target LOEUF",
           motif_cor_score        = "Motif correlation score",
@@ -2238,10 +2289,55 @@ function(input, output, session) {
         
         df
       })
+      
+      observe({
+        df <- results1_data()
+        
+        display_names <- names(df)
+        plain_names <- strip_header_html(display_names)
+        
+        choice_map <- stats::setNames(display_names, plain_names)
+        
+        selected_value <- if ("Off-target score" %in% plain_names) {
+          display_names[match("Off-target score", plain_names)]
+        } else {
+          display_names[1]
+        }
+        
+        updateSelectInput(
+          session,
+          "main_table_sort_col",
+          choices = choice_map,
+          selected = selected_value
+        )
+      })
+      
+      results1_sorted <- reactive({
+        df <- results1_data()
+        
+        sort_col <- input$main_table_sort_col
+        sort_dir <- input$main_table_sort_dir
+        
+        if (is.null(sort_col) || !(sort_col %in% names(df))) {
+          return(df)
+        }
+        
+        if (identical(sort_dir, "desc")) {
+          df <- df %>%
+            dplyr::arrange(dplyr::desc(is.na(.data[[sort_col]])),
+                           dplyr::desc(.data[[sort_col]]))
+        } else {
+          df <- df %>%
+            dplyr::arrange(is.na(.data[[sort_col]]),
+                           .data[[sort_col]])
+        }
+        
+        df
+      })
       #############
       
       output$results1 <- DT::renderDT({
-        df <- results1_data()
+        df <- results1_sorted()
         
         main_cols <- c(
           if (isTRUE(input$single_aso_input)) "Input order",
@@ -2274,10 +2370,15 @@ function(input, output, session) {
           df,
           rownames  = FALSE,
           selection = "single",
+          escape    = FALSE,
           options   = list(
-            dom        = "tip",
-            columnDefs = column_defs
-          )
+            dom = "tip",
+            columnDefs = c(
+              column_defs,
+              list(list(className = "dt-center", targets = "_all"))
+            )
+          ),
+          class = "compact stripe cell-border"
         )
         
         DT::formatRound(
@@ -2286,6 +2387,12 @@ function(input, output, session) {
           digits  = 0
         )
       })
+      
+      observe({
+        req(results1_sorted())
+        shinyjs::enable("toggle_cols")
+      })
+      
       # ----------------------------- Offtarget analysis ---------------------------
       
       # Off-target information is stored in reactiveVals, so dependencies can be easily updated.
@@ -2650,7 +2757,16 @@ function(input, output, session) {
         # Renders table output for rnaseh_results. 
         output$rnaseh_results <- DT::renderDT({
           rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
-          DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
+          DT::datatable(
+            rnaseh_view,
+            selection = list(mode = "single", selected = 1),
+            options = list(
+              paging = FALSE,
+              searching = FALSE,
+              info = FALSE,
+              dom = "t"
+            )
+          )
         })
         
         # Renders cleavage_visual div on rnaseh page.
@@ -2866,7 +2982,16 @@ function(input, output, session) {
           
           output$rnaseh_results <- DT::renderDT({
             rnaseh_view <- rename_rnaseh_cols(rnaseh_data)
-            DT::datatable(rnaseh_view, selection = list(mode = "single", selected = 1))
+            DT::datatable(
+              rnaseh_view,
+              selection = list(mode = "single", selected = 1),
+              options = list(
+                paging = FALSE,
+                searching = FALSE,
+                info = FALSE,
+                dom = "t"
+              )
+            )
           })
           
           updateTabsetPanel(session, "tabs_main_general", selected = "Off target results")
@@ -3214,15 +3339,9 @@ function(input, output, session) {
           "Gene start",
           "Gene end",
           "Gene strand",
-          "Variant file name",
-          "Variant file type",
-          "Variant file staged path",
-          "Index file detected",
-          "Index staged path",
-          "Indexed input",
+          "Reference sequence length",
           "Region used",
           "Flank",
-          "Reference sequence length",
           "Variants in selected region"
         ),
         Value = c(
@@ -3230,16 +3349,10 @@ function(input, output, session) {
           gene_chr,
           gene_start,
           gene_end,
-          gene_strand,
-          input$patient_variant_file$name,
-          staged$variant_type,
-          staged$variant_path,
-          ifelse(is.null(staged$index_path), "no", "yes"),
-          ifelse(is.null(staged$index_path), "", staged$index_path),
-          ifelse(staged$is_indexed, "yes", "no"),
+          gene_strand, 
+          nchar(as.character(ref_seq)),
           region_string,
           flank,
-          nchar(as.character(ref_seq)),
           nrow(variants_region)
         )
       )
@@ -3251,56 +3364,6 @@ function(input, output, session) {
       }, striped = TRUE, bordered = TRUE, spacing = "s")
       
       
-      # this output table is jsut to make sure things worked, can also be removed later on
-      output$unfiltered_results_table_patient <- renderDT({
-        datatable(
-          tibble(
-            step = c(
-              "Gene selected",
-              "Variant file uploaded",
-              "Variant file staged",
-              "Region resolved",
-              "Reference sequence retrieved",
-              "Patient variants read"
-            ),
-            status = c(
-              "yes",
-              "yes",
-              "yes",
-              "yes",
-              "yes",
-              ifelse(nrow(variants_region) > 0, "yes", "no variants found")
-            )
-          ),
-          rownames = FALSE,
-          options = list(dom = "t", ordering = FALSE),
-          class = "compact stripe"
-        )
-      })
-      
-      
-      # alos just a test table
-      output$results1_patient <- renderDT({
-        datatable(
-          tibble(
-            check = c(
-              "Gene",
-              "Variant file",
-              "Index",
-              "Region"
-            ),
-            value = c(
-              ensembl_ID,
-              input$patient_variant_file$name,
-              ifelse(is.null(staged$index_path), "none", basename(staged$index_path)),
-              region_string
-            )
-          ),
-          rownames = FALSE,
-          options = list(dom = "t", pageLength = 10)
-        )
-      })
-      
       output$patient_snvs_table <- renderDT({
         datatable(
           variants_region %>%
@@ -3311,27 +3374,38 @@ function(input, output, session) {
               alt,
               variant_type,
               gt,
-              phased,
-              allele1_code,
-              allele2_code,
+              # phased,
+              # allele1_code,
+              # allele2_code,
               hap1_allele,
               hap2_allele,
               variant_on,
-              allele_note,
-              sample
+              allele_note
+              # sample
+            ) %>%
+            dplyr::rename(
+              "Chromosome" = chr,
+              "Position" = pos,
+              "Reference" = ref,
+              "Patient" = alt,
+              "Variant Type" = variant_type,
+              "Genotype" = gt,
+              "Allele 1" = hap1_allele,
+              "Allele 2" = hap2_allele,
+              "Variant Location" = variant_on,
+              "Phase Info" = allele_note
             ),
           rownames = FALSE,
-          options = list(pageLength = 10, scrollX = TRUE)
+          class = "nowrap",
+          options = list(
+            pageLength = 10,
+            scrollX = TRUE,
+            columnDefs = list(
+              list(className = 'dt-center', targets = "_all")
+            )
+          )
         )
       })
-      
-      output$patient_reference_sequence <- renderText({
-        as.character(ref_seq)
-      })
-      
-      # output$patient_modified_sequence <- renderText({
-      #   as.character(patient_seq)
-      # })
       
       # download buttons for output tables
       output$Download_unfiltered_patient <- downloadHandler(
@@ -3343,19 +3417,10 @@ function(input, output, session) {
         }
       )
       
-      output$Download_filtered_patient <- downloadHandler(
-        filename = function() {
-          paste0("patient_input_summary_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
-        },
-        content = function(file) {
-          write.csv(patient_summary_df, file, row.names = FALSE)
-        }
-      )
-      
       incProgress(1, detail = "Done")
       
       showNotification(
-        "Patient input files were uploaded and staged successfully.",
+        "Variants were read successfully.",
         type = "message",
         duration = 8
       )

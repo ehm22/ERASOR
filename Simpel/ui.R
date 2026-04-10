@@ -8,6 +8,8 @@ library(bslib)
 
 # if this is TRUE the patient specific tab will show, if FALSE then the tab is hidden
 show_patient_tab <- TRUE 
+# dev mode keeps interface clickabel and usable so ui changes can be checked should be false for users since they will just use it and then get disappointed it doesnt work 
+dev_mode <- FALSE
 
 ### for sliders with numeric input boxes
 rangeFilterUI <- function(
@@ -66,16 +68,18 @@ rangeFilterUI <- function(
 ui <- fluidPage(
   useShinyjs(),
   
-  div(
-    id = "app_startup_loading",
+  if (!dev_mode) {
     div(
-      id = "app_startup_loading_box",
-      span(id = "startup_loading_text", "Please wait. Loading"),
-      span(id = "loading_dots", ".")
+      id = "app_startup_loading",
+      div(
+        id = "app_startup_loading_box",
+        span(id = "startup_loading_text", "Please wait. Loading"),
+        span(id = "loading_dots", ".")
+      )
     )
-  ),
+  },
   
-    theme = shinythemes::shinytheme("flatly"),
+     theme = shinythemes::shinytheme("flatly"),
   
   #### troll purple for annelot ##&*####
   # theme = bs_theme(
@@ -99,6 +103,59 @@ ui <- fluidPage(
           justify-content: center;
         }
         
+        table.dataTable thead th {
+          white-space: nowrap !important;
+          vertical-align: middle !important;
+          text-align: center !important;
+        }
+        
+        table.dataTable thead th .col-header-with-tooltip {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          white-space: nowrap;
+        }
+        
+       .col-header-with-tooltip {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          position: relative;
+        }
+        
+        .tooltip-icon {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          cursor: help;
+        }
+        
+        .custom-tooltip {
+          visibility: hidden;
+          opacity: 0;
+          position: absolute;
+          bottom: 125%;          /* place above icon */
+          left: 50%;
+          transform: translateX(-50%);
+          background: #222;
+          color: #fff;
+          padding: 6px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+          max-width: 400px;
+          width: 400px;
+          white-space: normal;
+          text-align: center;
+          z-index: 10000;
+          transition: opacity 0.15s ease;
+        }
+        
+        /* show tooltip */
+        .tooltip-icon:hover .custom-tooltip {
+          visibility: visible;
+          opacity: 1;
+        }
+                
         /* rows clickable */
           table.dataTable tbody tr {
           cursor: pointer;
@@ -108,11 +165,50 @@ ui <- fluidPage(
         /* hover highlight */
           table.dataTable tbody tr:hover {
           background-color: #e8f4ff !important;
-          }
-        
+        }
+          
+        /* file upload progress bar */
+          .file-upload-complete .progress-bar {
+            background-color: #5cb85c !important;
+            border-color: #4cae4c !important;
+        }
+                  
         /* center DT column headers */
             table.dataTable thead th {
            text-align: center !important;
+            }
+            
+        #toggle_cols:disabled,
+        #toggle_cols.disabled {
+          opacity: 0.65 !important;
+          cursor: default !important;
+        }
+        
+        .disabled-section,
+        .disabled-section * {
+          color: #999999 !important;
+        }
+        
+        .disabled-section {
+          opacity: 0.55 !important;
+          pointer-events: none;
+        }
+        
+        .disabled-section .irs-bar,
+        .disabled-section .irs-line,
+        .disabled-section .irs-handle,
+        .disabled-section .irs-single,
+        .disabled-section .irs-from,
+        .disabled-section .irs-to {
+          opacity: 0.55 !important;
+        }
+        
+        .disabled-section .control-label,
+        .disabled-section h4,
+        .disabled-section h5,
+        .disabled-section label,
+        .disabled-section .shiny-input-container label {
+          color: #999999 !important;
         }
 
         #app_startup_loading_box {
@@ -228,28 +324,36 @@ ui <- fluidPage(
                   )
                 ),
                 
-                checkboxInput(
-                  "single_aso_input",
-                  label = "Get characteristics for specific ASOs",
-                  value = FALSE
-                ),
-                
-                conditionalPanel(
-                  condition = "input.single_aso_input == true",
-                  tagList(
-                    textAreaInput(
-                      "aso_seq_input",
-                      label = NULL,
-                      value = "",
-                      placeholder = "Enter ASO sequences separated by comma, point or white space.",
-                      rows = 5
+                div(
+                  style = "margin: 15px 0; padding: 15px; border: 2px solid #5bc0de; border-radius: 8px; background-color: #f4fbfd;",
+                  
+                  checkboxInput(
+                    "single_aso_input",
+                    label = tagList(
+                      strong("Specific ASO input mode"),
+                      tags$br(),
+                      tags$small("Use this mode to analyse only manually entered ASO sequences.")
                     ),
-                    tags$small(
-                      "Only sequences containing A, C, G, and T are recognized. "
-                    ),
-                    br(),
-                    strong("Detected ASO sequences:"),
-                    verbatimTextOutput("parsed_asos")
+                    value = FALSE
+                  ),
+                  
+                  conditionalPanel(
+                    condition = "input.single_aso_input == true",
+                    tagList(
+                      textAreaInput(
+                        "aso_seq_input",
+                        label = "Enter ASO sequences",
+                        value = "",
+                        placeholder = "Enter ASO sequences separated by comma, point or white space.",
+                        rows = 5
+                      ),
+                      tags$small(
+                        "Only sequences containing A, C, G, and T are recognized."
+                      ),
+                      br(), br(),
+                      strong("Detected ASO sequences:"),
+                      verbatimTextOutput("parsed_asos")
+                    )
                   )
                 ),
                 
@@ -272,49 +376,12 @@ ui <- fluidPage(
                   value = TRUE
                 ),
                 
-                checkboxInput(
-                  "ASO_ending_G",
-                  label = tagList(
-                    "Filter out ASOs ending in G ",
-                    tags$span(
-                      tags$img(
-                        src = "questionmark.png",
-                        height = "20px",
-                        style = "margin-bottom: 3px;"
-                      ),
-                      title = "Removes ASO sequences ending with G. These sequences have a higher chance to induce toxicity.",
-                      `data-placement` = "right",
-                      `data-toggle` = "tooltip",
-                      style = "cursor: pointer;"
-                    )
-                  ),
-                  value = TRUE
-                ),
-                
-                checkboxInput(
-                  "Conserved_input",
-                  label = tagList(
-                    "Conserved in Mus musculus ",
-                    tags$span(
-                      tags$img(
-                        src = "questionmark.png",
-                        height = "20px",
-                        style = "margin-bottom: 3px;"
-                      ),
-                      title = "This feature identifies conserved regions and orthologous genes in the mouse genome. Enabling this filter will show ASOs which could be used in mouse models.",
-                      `data-placement` = "right",
-                      `data-toggle` = "tooltip",
-                      style = "cursor: pointer;"
-                    )
-                  ),
-                  value = FALSE
-                ),
                 div(
-                  style = "display:none;", # this keeps the filter and button hidden
+                  # style = "display:none;", # this keeps the filter and button hidden
                   checkboxInput(
                     "linux_input",
                     label = tagList(
-                      "Accessibility calculation (Linux-OS only)",
+                      "Secondary structure calculation (Linux-OS only)",
                       tags$span(
                         tags$img(
                           src = "questionmark.png",
@@ -327,11 +394,54 @@ ui <- fluidPage(
                         style = "cursor: pointer;"
                       )
                     ),
+                    value = TRUE
+                  )
+                ),
+                
+                div(
+                  id = "non-numeric_filters",
+                  
+                  checkboxInput(
+                    "ASO_ending_G",
+                    label = tagList(
+                      "Filter out ASOs ending in G ",
+                      tags$span(
+                        tags$img(
+                          src = "questionmark.png",
+                          height = "20px",
+                          style = "margin-bottom: 3px;"
+                        ),
+                        title = "Removes ASO sequences ending with G. These sequences have a higher chance to induce toxicity.",
+                        `data-placement` = "right",
+                        `data-toggle` = "tooltip",
+                        style = "cursor: pointer;"
+                      )
+                    ),
+                    value = TRUE
+                  ),
+                  
+                  checkboxInput(
+                    "Conserved_input",
+                    label = tagList(
+                      "Conserved in Mus musculus ",
+                      tags$span(
+                        tags$img(
+                          src = "questionmark.png",
+                          height = "20px",
+                          style = "margin-bottom: 3px;"
+                        ),
+                        title = "This feature identifies conserved regions and orthologous genes in the mouse genome. Enabling this filter will show ASOs which could be used in mouse models.",
+                        `data-placement` = "right",
+                        `data-toggle` = "tooltip",
+                        style = "cursor: pointer;"
+                      )
+                    ),
                     value = FALSE
                   )
                 ),
                 
                 div(
+                  id = "oligo_length_block",
                   class = "no-minor-ticks",
                   sliderInput(
                     "oligo_length_range",
@@ -430,6 +540,7 @@ ui <- fluidPage(
                           style = "cursor: pointer;"
                         )
                       )),
+                      
                       fluidRow(
                         div(
                           class = "no-minor-ticks",
@@ -526,33 +637,36 @@ ui <- fluidPage(
                             style = "cursor: pointer;"
                           )
                         )),
-                        fluidRow(
-                          column(
-                            9,
-                            rangeFilterUI(
-                              id    = "accessibility",
-                              label = NULL,
-                              min   = 0,
-                              max   = 1,
-                              value = c(0, 0.000001),
-                              step  = 0.000001,
-                              fixed = "none"
-                            )
-                          ),
-                          column(3, checkboxInput("Accessibility_input", "Enable", value = FALSE))
-                        )
+                        # remove accessiblity as a filter btut keep it in the table
+                        # fluidRow(
+                        #   column(
+                        #     9,
+                        #     rangeFilterUI(
+                        #       id    = "accessibility",
+                        #       label = NULL,
+                        #       min   = 0,
+                        #       max   = 1,
+                        #       value = c(0, 0.000001),
+                        #       step  = 0.000001,
+                        #       fixed = "none"
+                        #     )
+                        #   ),
+                        #   column(3, checkboxInput("Accessibility_input", "Enable", value = FALSE))
+                        # )
                       ),
-                      
-                      fluidRow(
-                        column(4, actionButton("run_button", "Run")),
-                        column(4, actionButton("reset_defaults", "Set to default"))
-                      )
+
                     )
                   )
+                ),
+                fluidRow(
+                  column(4, actionButton("run_button", "Run")),
+                  column(4, actionButton("reset_defaults", "Set to default"))
                 )
               )
             )
           ),
+          
+          
           
           mainPanel(
             width = 9,
@@ -562,7 +676,7 @@ ui <- fluidPage(
               tabPanel(
                 "Sequence results",
                 div(
-                  "This is the main page of the application, which displays the primary output table. The table lists all potential target mRNA sequences for the provided Ensembl ID and includes information to help the user select suitable ASO targets. After selecting an ASO, the application automatically redirects to the RNase H tab, and the chosen ASO becomes available for further analysis on all other tabs.",
+                  "This is the main page of the application, which displays the primary output table. The table lists all potential ASOs and target sequences for the provided gene and includes information to help the user select suitable ASO candidates Selecting an ASO will automatically refer to the Off target results page. The selected ASO will also be be seleted for the RNase H cleavage results tab.",
                   style = "margin-top: 20px; font-size: 18px;"
                 ),
                 hr(),
@@ -583,9 +697,27 @@ ui <- fluidPage(
                   column(
                     3,
                     actionButton("toggle_cols", "Extended data")
+                  ),
+                  column(
+                    4,
+                    selectInput(
+                      "main_table_sort_col",
+                      "Sort by:",
+                      choices = NULL
+                    )
+                  ),
+                  column(
+                    3,
+                    selectInput(
+                      "main_table_sort_dir",
+                      "Direction:",
+                      choices = c("Ascending" = "asc", "Descending" = "desc"),
+                      selected = "asc"
+                    )
                   )
                 ),
                 br(),
+                p("Click on a sequence to select it for RNaseH and off-target results. "),
                 DT::dataTableOutput("results1"),
                 hr(),
                 downloadButton("Download_filtered", "Download Filtered Results")
@@ -877,33 +1009,17 @@ ui <- fluidPage(
               tabPanel(
                 "Input summary",
                 div(
-                  "This page currently only checks the patient input setup. It verifies the selected gene, stages the uploaded variant and index files, resolves the chromosome region, and shows a summary of the detected input. No variant reading or ASO generation is performed yet.",
+                  "This page currently only checks the variants and their positions of the patient data. Further down development, the ASO generation and filtering will also be included for the patient sequence.",
                   style = "margin-top: 20px; font-size: 18px;"
                 ),
                 hr(),
                 h4("Patient input summary"),
                 tableOutput("patient_summary"),
                 hr(),
-                h4("Status checks"),
-                DTOutput("unfiltered_results_table_patient"),
-                hr(),
-                h4("Resolved inputs"),
-                DTOutput("results1_patient"),
-                hr(),
                 downloadButton("Download_unfiltered_patient", "Download Input Summary"),
-                br(), br(),
-                downloadButton("Download_filtered_patient", "Download Input Summary"),
                 hr(),
                 h4("Detected SNVs in selected region"),
-                DTOutput("patient_snvs_table"),
-                
-                hr(),
-                h4("Reference sequence"),
-                verbatimTextOutput("patient_reference_sequence"),
-                
-                hr(),
-                h4("Patient-specific sequence"),
-                verbatimTextOutput("patient_modified_sequence")
+                DTOutput("patient_snvs_table")
               )
             )
           )
@@ -950,6 +1066,29 @@ ui <- fluidPage(
     }
 
   }, 60000);
+  
+  function markCompletedUploads() {
+    $('.shiny-input-container input[type=file]').each(function() {
+      var container = $(this).closest('.shiny-input-container');
+      var bar = container.find('.progress-bar');
+
+      if (bar.length) {
+        var width = bar.attr('style') || '';
+        if (width.indexOf('100%') !== -1) {
+          container.addClass('file-upload-complete');
+        } else {
+          container.removeClass('file-upload-complete');
+        }
+      }
+    });
+  }
+
+  $(document).on('change', 'input[type=file]', function() {
+    var container = $(this).closest('.shiny-input-container');
+    container.removeClass('file-upload-complete');
+  });
+
+  setInterval(markCompletedUploads, 300);
 ")),
   
   tags$script(
