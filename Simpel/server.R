@@ -90,6 +90,73 @@ strip_header_html <- function(x) {
   x <- gsub("<[^>]+>", "", x, perl = TRUE)
   trimws(x)
 }
+
+## Analysis mode helpers -------------------------------------------------------
+
+has_reference_gene <- function(x) {
+  !is.null(x) && nzchar(trimws(x))
+}
+
+build_target_annotation_from_asos <- function(asos) {
+  asos <- unique(toupper(trimws(asos)))
+  asos <- asos[grepl("^[ACGT]+$", asos)]
+  
+  if (length(asos) == 0) {
+    return(tibble(
+      oligo_seq = character(),
+      name = character(),
+      length = integer(),
+      start = integer(),
+      end = integer(),
+      input_order = integer()
+    ))
+  }
+  
+  oligo_dna <- DNAStringSet(asos)
+  target_dna <- reverseComplement(oligo_dna)
+  
+  tibble(
+    oligo_seq = as.character(oligo_dna),
+    name = as.character(target_dna),   # keep this so the rest of your code still works
+    length = nchar(asos),
+    start = NA_integer_,
+    end = NA_integer_,
+    input_order = seq_along(asos)
+  )
+}
+
+add_empty_reference_columns <- function(df) {
+  if (!"chr_start" %in% names(df)) df$chr_start <- NA_integer_
+  if (!"chr_end" %in% names(df)) df$chr_end <- NA_integer_
+  if (!"region_class" %in% names(df)) df$region_class <- NA_character_
+  if (!"target_transcript" %in% names(df)) df$target_transcript <- NA_character_
+  if (!"PM_tot_freq" %in% names(df)) df$PM_tot_freq <- NA_real_
+  if (!"PM_max_freq" %in% names(df)) df$PM_max_freq <- NA_real_
+  if (!"PM_count" %in% names(df)) df$PM_count <- NA_real_
+  if (!"NoRepeats" %in% names(df)) df$NoRepeats <- NA_real_
+  if (!"conserved_in_mmusculus" %in% names(df)) df$conserved_in_mmusculus <- NA
+  df
+}
+
+reference_required_display_cols <- function() {
+  c(
+    "Start position in gene",
+    "End position in gene",
+    "Target region",
+    "Target transcript(s)",
+    "Chromosome start pos.",
+    "Chromosome end pos.",
+    "PM total freq.",
+    "PM max freq.",
+    "PM count",
+    "Number of repeats",
+    "Conserved in mouse",
+    "Accessibility",
+    "Perfect matches (Pedersen)",
+    "Off-targets 1 mismatch (Pedersen)"
+  )
+}
+
 ## Creating off-target sequences with annotated indels/mismatches --------------
 render_subject_alignment_html <- function(subject_seq, match_string) {
   s_raw <- gsub("-", "", as.character(subject_seq))
@@ -1014,6 +1081,10 @@ function(input, output, session) {
   
   biomart_available <- reactiveVal(NULL)
   
+  use_reference_gene <- reactive({
+    has_reference_gene(input$ensemble_id_input)
+  })
+  
   observeEvent(TRUE, {
     available <- check_biomart()
     biomart_available(available)
@@ -1103,7 +1174,7 @@ function(input, output, session) {
       session,
       inputId  = "ensemble_id_input",
       choices  = gene_choices_df,
-      selected = "ENSG00000174775",
+      selected = if (isTRUE(input$single_aso_input)) "" else last_reference_gene(),
       server   = TRUE,
       options  = list(
         valueField  = "value",
@@ -1114,13 +1185,26 @@ function(input, output, session) {
     )
   })
   
+  ## store sleected gene and then enable/disable it when selctin single aso input
+  last_reference_gene <- reactiveVal("ENSG00000174775")
+  observeEvent(input$ensemble_id_input, {
+    if (!isTRUE(input$single_aso_input) &&
+        !is.null(input$ensemble_id_input) &&
+        nzchar(input$ensemble_id_input)) {
+      last_reference_gene(input$ensemble_id_input)
+    }
+  }, ignoreInit = TRUE)
+  
+  ## lock single aso input after running since it messes up a lot of ui afterwards if zou change after the run
+  single_aso_locked <- reactiveVal(FALSE)
+  
   ######$$$########
   observe({
     updateSelectizeInput(
       session,
       inputId  = "ensemble_id_input_patient",
       choices  = gene_choices_df,
-      selected = "ENSG00000174775",
+      selected = if (isTRUE(input$single_aso_input)) "" else last_reference_gene(),
       server   = TRUE,
       options  = list(
         valueField  = "value",
@@ -1178,6 +1262,15 @@ function(input, output, session) {
     
     if (isTRUE(input$single_aso_input)) {
       
+      if (!is.null(input$ensemble_id_input) && nzchar(input$ensemble_id_input)) {
+        last_reference_gene(input$ensemble_id_input)
+      }
+      updateSelectizeInput(
+        session,
+        "ensemble_id_input",
+        selected = ""
+      )
+      
       updateCheckboxInput(session, "perfect_input",  value = FALSE)
       updateCheckboxInput(session, "mismatch_input", value = FALSE)
       updateCheckboxInput(session, "Poly_input",     value = FALSE)
@@ -1198,6 +1291,12 @@ function(input, output, session) {
       shinyjs::addClass("oligo_length_block", "disabled-section")
       
     } else {
+      
+      updateSelectizeInput(
+        session,
+        "ensemble_id_input",
+        selected = last_reference_gene()
+      )
       
       updateCheckboxInput(session, "perfect_input",  value = TRUE)
       updateCheckboxInput(session, "mismatch_input", value = TRUE)
@@ -1276,16 +1375,14 @@ function(input, output, session) {
       closeButton = TRUE
     )
     
+    if (isTRUE(input$single_aso_input) && !isTRUE(single_aso_locked())) {
+      single_aso_locked(TRUE)
+      updateCheckboxInput(session, "single_aso_input", value = TRUE)
+      shinyjs::disable("single_aso_input")
+    }
     
     withProgress(message = "Running analysis...", value = 0, {
-      run_step <- function(label, amount, expr) {
-        incProgress(0, detail = paste0(label, "..."))
-        on.exit(
-          incProgress(amount, detail = paste0(label)),
-          add = TRUE
-        )
-        force(expr)
-      }
+
       
       # ----------------------------------- Functions ------------------------------
       
@@ -1332,14 +1429,28 @@ function(input, output, session) {
       # ----------------------------------- Data setup -----------------------------
       # Store all human pre-mRNA sequences
       
-      txdb_hsa <- run_step("Retrieving sequences from Ensembl", 0.05, {
-        tryCatch({
-          loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
-        }, error = function(e) {
-          message("Primary txdb path not found, trying local path...")
-          loadDb("../txdb_hsa_biomart.db")
-        })
-      })
+      txdb_hsa <- NULL
+      gdb_hsa <- NULL
+      HS <- NULL
+      RNA_target <- NULL
+      target_ranges <- NULL
+      chr_coord <- NULL
+      ensembl_ID <- NULL
+      target_regions <- NULL
+      
+      need_txdb_hs <- isTRUE(use_reference_gene()) || isTRUE(input$perfect_input) || isTRUE(input$mismatch_input)
+      
+      
+      
+      if (need_txdb_hs) {
+        txdb_hsa <- tryCatch({
+            loadDb("/opt/ERASOR/txdb_hsa_biomart.db")
+          }, error = function(e) {
+            message("Primary txdb path not found, trying local path...")
+            loadDb("../txdb_hsa_biomart.db")
+          })
+        
+      incProgress(0.05, detail = "Loading sequences")
       
       # ----------------------------------- milestone 1 ----------------------------
       print("milestone1: loaded human database object")
@@ -1354,17 +1465,20 @@ function(input, output, session) {
       # Keep only chromosomes present in BOTH objects
       common_chrs <- intersect(seqlevels(gdb_hsa), seqlevels(Hsapiens))
       gdb_hsa <- keepSeqlevels(gdb_hsa, common_chrs, pruning.mode = "coarse")
+      }
       
       # ----------------------------------- milestone 2 ----------------------------
       print("milestone2: Subsetted genes from specified chromosomes")
       
       # Get the sequences *
-      HS <- getSeq(Hsapiens, gdb_hsa)
-      
+      if (isTRUE(input$perfect_input) || isTRUE(input$mismatch_input) || isTRUE(use_reference_gene())) {
+        HS <- getSeq(Hsapiens, gdb_hsa)}
+        
       # ----------------------------------- milestone 3 ----------------------------
       print("milestone3: Saved human gene sequences")
-      # Target collect the pre-mRNA sequence
       
+      # Target collect the pre-mRNA sequence
+      if (isTRUE(use_reference_gene())) {
       # Define wanted Ensembl ID
       ensembl_ID = input$ensemble_id_input
       
@@ -1374,19 +1488,28 @@ function(input, output, session) {
       
       # ----------------------------------- milestone 4 ----------------------------
       print("milestone4: Saved input RNA target (ENSEMBL) information: \n")
-      print(RNA_target)
+      
       #filters on ensembl ID
       target_ranges = gdb_hsa[names(gdb_hsa) == ensembl_ID]
       
+      if (length(RNA_target) != 1) {
+        showNotification("Selected reference gene was not found.", type = "error", duration = 8)
+        return(NULL)
+      }
+      
+      if (length(target_ranges) != 1) {
+        showNotification("Selected reference gene coordinates were not found.", type = "error", duration = 8)
+        return(NULL)
+      }
       
       # Extracts the chromosome name for target range,extracts the start and end
       # Position of the genomic region and note from which strand it is.
       # Positive strand 1 ('+'), negative strand -1 ('-'), or unspecified 0 ('*').
-      chr_coord = c(
-        chr = as.numeric(as.character(seqnames(target_ranges))),
-        start = start(target_ranges),
-        end = end(target_ranges),
-        strand = ifelse(strand(target_ranges) == "+", 1, -1)
+      chr_coord <- list(
+        chr = as.character(seqnames(target_ranges)),
+        start = as.integer(start(target_ranges)),
+        end = as.integer(end(target_ranges)),
+        strand = ifelse(as.character(strand(target_ranges)) == "+", 1L, -1L)
       )
       
       # ----------------------------------- milestone 5 ----------------------------
@@ -1430,35 +1553,72 @@ function(input, output, session) {
           target_annotation$input_order <- match(target_annotation$name, rev_comps)
           target_annotation <- target_annotation[order(target_annotation$input_order), ]
         } else {
-          target_annotation <- target_annotation[0, ]
+          target_annotation <- target_annotation[0, , drop = FALSE]
         }
       }
       # ----------------------------------- milestone 6 ----------------------------
       print("milestone6: Enumerated all possible ASO target sequences")
       
+      } else {
+        
+        # ---------------- ASO-only mode: build directly from user input -------------
+        aso_matches <- parsed_asos()
+        
+        if (!isTRUE(input$single_aso_input) || length(aso_matches) == 0) {
+          showNotification(
+            "No valid ASO sequences detected.",
+            type = "error",
+            duration = 8
+          )
+          return(NULL)
+        }
+        
+        target_annotation <- build_target_annotation_from_asos(aso_matches)
+        
+        target_annotation$PM_tot_freq <- NA_real_
+        target_annotation$PM_max_freq <- NA_real_
+        target_annotation$PM_count    <- NA_real_
+        
+        target_regions <- DNAStringSet(target_annotation$name)
+        names(target_regions) <- target_annotation$name
+        
+        # chr_coord remains NULL in ASO-only mode
+        # RNA_target remains NULL in ASO-only mode
+        # target_ranges remains NULL in ASO-only mode
+      }
+      
+      target_annotation <- add_empty_reference_columns(target_annotation)
       
       # ----------------------------------- milestone 7 ----------------------------
       print("milestone 7: Prefiltered Oligo sequences ending with G")
       
-      if (input$linux_input == TRUE) {
-        # 3.4 Estimate Transcript Accessibility for the RNA Target at Single-Nucleotide Resolution
-        accessibility = RNAplfold_R(RNA_target, u.in = max(oligo_lengths)) %>%
+      # 3.4 Estimate Transcript Accessibility for the RNA Target at Single-Nucleotide Resolution
+      if (isTRUE(use_reference_gene()) && isTRUE(input$linux_input)) {
+        oligo_lengths <- sort(unique(target_annotation$length))
+        
+        accessibility <- RNAplfold_R(RNA_target, u.in = max(oligo_lengths)) %>%
           as_tibble() %>%
-          mutate(end = 1:l) %>%
+          mutate(end = 1:width(RNA_target)) %>%
           gather(length, accessibility, -end) %>%
           mutate(length = as.double(length))
         
-        target_annotation = left_join(target_annotation, accessibility, by =
-                                        c('length', 'end'))
-        
+        target_annotation <- left_join(
+          target_annotation,
+          accessibility,
+          by = c("length", "end")
+        )
+      } else {
+        target_annotation$accessibility <- NA_real_
       }
       # ----------------------------------- milestone 8 ----------------------------
       print("milestone 8: Calculated ViennaRNA accessibility score and filtering")
       
-      nucleobase_seq = reverseComplement(target_regions)
-      
-      # Voeg ze toe aan uni_tar gekoppeld aan name
-      target_annotation$oligo_seq = as.character(nucleobase_seq[target_annotation$name])
+      if (isTRUE(use_reference_gene())) {
+        nucleobase_seq <- reverseComplement(target_regions)
+        target_annotation$oligo_seq <- as.character(nucleobase_seq[target_annotation$name])
+      } else {
+        target_annotation$oligo_seq <- toupper(parsed_asos())[target_annotation$input_order]
+      }
       
       # Toxicity score acute neurotox score (desired >70)
       target_annotation$tox_score = calculate_acute_neurotox(target_annotation$oligo_seq)
@@ -1514,9 +1674,9 @@ function(input, output, session) {
       print("milestone 9.5: Calculated motif correlation score")
       
       # Bereken aantal "cg"
-      target_annotation$CGs = run_step("Getting mouse ortholog data", 0.10, {(target_annotation$length -
-                                                                                nchar(gsub('CG', '', target_annotation$name))) / 2
-      })
+      target_annotation$CGs = (target_annotation$length - nchar(gsub('CG', '', target_annotation$name))) / 2
+      
+      incProgress(0.1, detail = "Getting mouse ortholog data")
       
       # ----------------------------------- milestone 10 ---------------------------
       print("milestone 10: Calculated CG motifs")
@@ -1524,6 +1684,8 @@ function(input, output, session) {
       options(timeout = 60)
       
       # Define the marts for mmusculus and hsapiens
+      if (isTRUE(use_reference_gene())) {
+      
       martHS <- useEnsembl(
         biomart = "ENSEMBL_MART_ENSEMBL",
         dataset = "hsapiens_gene_ensembl",
@@ -1552,11 +1714,19 @@ function(input, output, session) {
                 ortho_ENS$mmusculus_homolog_ensembl_gene,
               mart = martMM)$gene_exon_intron)
       
+      } else {
+        martHS <- NULL
+        martMM <- NULL
+        ortho_ENS <- NULL
+        RNA_target_mouse <- DNAStringSet()
+        target_annotation$conserved_in_mmusculus <- NA 
+      }
+      
       # ----------------------------------- milestone 12 ---------------------------
       print("milestone 12: ")
       
       # Obtain all human polymorphisms for the RNA target
-      if (input$polymorphism_input == TRUE) {
+      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
         PMs = getBM(
           attributes = c("minor_allele_freq", "chromosome_start"),
           filters = "ensembl_gene_id",
@@ -1568,6 +1738,11 @@ function(input, output, session) {
           filter(!is.na(minor_allele_freq),
                  !duplicated(chromosome_start)) %>%
           rename(chr_start = chromosome_start, PM_freq = minor_allele_freq)
+      } else {
+        PMs <- tibble(
+          chr_start = integer(),
+          PM_freq = numeric()
+        )
       }
       
       ##If Ensembl is offline and still want to test -> load in manual test data.
@@ -1580,6 +1755,9 @@ function(input, output, session) {
       # Count Nucleobase sequence occurrences
       
       # Get the sequences
+      
+      if (isTRUE(use_reference_gene())){
+      
       tr = target_annotation$name
       
       # Count the sequences by making it a table
@@ -1588,19 +1766,25 @@ function(input, output, session) {
       # Save it as NoRepeats
       target_annotation$NoRepeats = as.vector(replica[tr])
       
+      } else {
+        target_annotation$NoRepeats <- NA_integer_
+      }
+      
       # ----------------------------------- milestone 14 ---------------------------
       print("milestone 14: Count amount of times ASO sequence is repeated in target gene")
       
       # High-Frequency Polymorphisms analysis
       
       # Correcting end and start cord based on direction
-      if (chr_coord['strand'] == 1) {
-        target_annotation$chr_start = chr_coord['start'] + target_annotation$start - 1
-        target_annotation$chr_end = chr_coord['start'] + target_annotation$end - 1
-      } else {
-        target_annotation$chr_start = chr_coord['end'] - target_annotation$end + 1
-        target_annotation$chr_end = chr_coord['end'] - target_annotation$start + 1
-      }
+      if (isTRUE(use_reference_gene())) {
+      
+        if (chr_coord$strand == 1L) {
+          target_annotation$chr_start <- chr_coord$start + target_annotation$start - 1L
+          target_annotation$chr_end   <- chr_coord$start + target_annotation$end - 1L
+        } else {
+          target_annotation$chr_start <- chr_coord$end - target_annotation$end + 1L
+          target_annotation$chr_end   <- chr_coord$end - target_annotation$start + 1L
+        }
       
       # ----------------------------------- milestone 15 ---------------------------
       print("milestone 15: Corrected start en end cord based on direction")
@@ -1611,9 +1795,16 @@ function(input, output, session) {
         ensembl_ID = ensembl_ID
       )
       
+      } else {
+        target_annotation$chr_start <- NA_integer_
+        target_annotation$chr_end <- NA_integer_
+        target_annotation$region_class <- NA_character_
+        target_annotation$target_transcript <- NA_character_
+      }
+      
       # Keep unique names only and extract
       # Information base on chr_start from target.
-      if (input$polymorphism_input == TRUE) {
+      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
         PM_freq = PMs %>%
           mutate(name = map(chr_start, function(X) {
             filter(target_annotation, chr_start <= X, chr_end >= X) %>%
@@ -1653,11 +1844,13 @@ function(input, output, session) {
       
       # Match RNA Target Regions to the Mouse Ortholog
       
-      # Get length
-      lm = width(RNA_target_mouse)
-      
       # Make table of mouse information
-      MM_tab = lapply(oligo_lengths, function(i) {
+      if (isTRUE(use_reference_gene()) && length(RNA_target_mouse) > 0) {
+        lm = width(RNA_target_mouse)
+      
+        oligo_lengths_current <- sort(unique(target_annotation$length))
+        
+       MM_tab = lapply(oligo_lengths_current, function(i) {
         tibble(st = 1:(lm - i + 1), w = i)
       }) %>%
         bind_rows()
@@ -1672,8 +1865,13 @@ function(input, output, session) {
       
       # Adds if conserved in mouse.
       
-      target_annotation$conserved_in_mmusculus = run_step("Calculating secondary structure characteristics", 0.25, {target_annotation$name %in% RNAsitesMM
-      })
+      target_annotation$conserved_in_mmusculus = target_annotation$name %in% RNAsitesMM
+      
+      } else {
+        target_annotation$conserved_in_mmusculus <- NA
+      }
+      
+      incProgress(0.25, detail = "Calculating secondary structure characteristics")
       
       # ----------------------------------- milestone 18.2 -------------------------
       print("milestone 18.2: If selected: Matched mouse ortholog to target gene")
@@ -1717,7 +1915,7 @@ function(input, output, session) {
       )
       ##
       
-      nseq_pmfreq <- if (isTRUE(input$polymorphism_input)) {
+      nseq_pmfreq <- if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
         pm_rng <- pm_range()
         
         nseq_prefilter - nrow(
@@ -1833,20 +2031,20 @@ function(input, output, session) {
       # }
       # 
       # 4) polymorphism NA->0 (geen filter; alleen transform)
-      if (isTRUE(input$polymorphism_input)) {
+      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
         ta <- ta %>%
           mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
       }
       
       # 5) polymorphism frequency filter
-      if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
+      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
         ta_prev <- ta
-        if (isTRUE(input$polymorphism_input)) {
+        if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
           ta <- ta %>%
             mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
         }
         
-        if (isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
+        if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input) && isTRUE(input$Poly_input)) {
           ta_prev <- ta
           rng <- pm_range()  # c(min,max), min fixed at 0
           ta <- apply_range(ta, "PM_tot_freq", rng)
@@ -1865,7 +2063,7 @@ function(input, output, session) {
       }
       
       # 6) conserved filter
-      if (isTRUE(input$Conserved_input)) {
+      if (isTRUE(use_reference_gene()) && isTRUE(input$Conserved_input)) {
         ta_prev <- ta
         ta <- ta %>% filter(conserved_in_mmusculus == TRUE)
         
@@ -1886,6 +2084,8 @@ function(input, output, session) {
       # count the number of pre-mRNA transcripts with a perfect match 
       
       # this part will take some time to run...
+      if (!is.null(HS) && nrow(target_annotation) > 0) {
+      
       uni_tar = dplyr::select(target_annotation, name, length)%>%
         unique() %>%
         split(.,.$length)
@@ -1916,12 +2116,19 @@ function(input, output, session) {
         future.seed = TRUE
       )
       
-      uni_tar <-run_step("Searching for off-targets.", 0.40, {bind_rows(uni_tar_list)
-      })
+      uni_tar <-bind_rows(uni_tar_list)
+      
       # ----------------------------------- milestone 21 ---------------------------
       print("milestone 21: Matched ASO sequences to potential off-targets (perfect match, one mismatch")
       
       target_annotation <- left_join(target_annotation, uni_tar, by = c("name", "length"))
+      
+      } else {
+        target_annotation$gene_hits_pm <- NA_integer_
+        target_annotation$gene_hits_1mm <- NA_integer_
+      }
+      
+      incProgress(0.4, detail = "Searching for off-targets")
       
       perform_offt <- TRUE
       
@@ -2026,6 +2233,8 @@ function(input, output, session) {
       }
       # ----------------------------------- milestone 23 ----------------------------
       print("milestone 23: GGGenome searched for all ASO off-targets")
+     
+      off_targets_total <- tibble() 
       if (!is.null(summary_server)) {
         tmp <- tempfile(fileext = ".bgz")
         
@@ -2168,6 +2377,24 @@ function(input, output, session) {
       )
       
       output$unfiltered_results_table <- renderDT({
+        if (isTRUE(input$single_aso_input)) {
+          return(
+            datatable(
+              data.frame(
+                Message = "Filter summary is not shown in single ASO input mode."
+              ),
+              rownames = FALSE,
+              options = list(
+                dom = "t",
+                ordering = FALSE,
+                searching = FALSE,
+                paging = FALSE
+              ),
+              class = "compact stripe"
+            )
+          )
+        }
+        
         datatable(
           filter_numbers,
           rownames = FALSE,
@@ -2281,6 +2508,10 @@ function(input, output, session) {
         to_rename <- intersect(names(df), names(column_names))
         names(df)[match(to_rename, names(df))] <- column_names[to_rename]
         
+        if (!isTRUE(use_reference_gene())) {
+          df <- df %>% dplyr::select(-dplyr::any_of(reference_required_display_cols()))
+        }
+        
         if (isTRUE(input$single_aso_input) && "Input order" %in% names(df)) {
           df <- df %>% dplyr::arrange(`Input order`)
         } else if ("Off-target score" %in% names(df)) {
@@ -2344,8 +2575,7 @@ function(input, output, session) {
           "ASO sequence",
           "Target (DNA)",
           "ASO length (nt)",
-          "Start position in gene",
-          "End position in gene",
+          if (isTRUE(use_reference_gene())) c("Start position in gene", "End position in gene"),
           "GC content (%)",
           "Acute neurotox score",
           "Off-target score",
@@ -3113,7 +3343,6 @@ function(input, output, session) {
         }
       )
       
-      target_annotation[order(target_annotation$off_target_score), ]
       # Filtered data downloader
       output$Download_filtered <- downloadHandler(
         
@@ -3329,7 +3558,7 @@ function(input, output, session) {
         region_start = region_info$start
       )
       
-      incProgress(0.75, detail = "Rendering upload summary")
+      incProgress(0.9, detail = "Rendering summary")
       
       # generate a summary table for now, this can be replaced once this entire input process works
       patient_summary_df <- tibble(

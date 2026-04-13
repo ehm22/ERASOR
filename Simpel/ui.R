@@ -121,8 +121,12 @@ ui <- fluidPage(
           align-items: center;
           gap: 4px;
           position: relative;
-        }
+       }
         
+        #aso_seq_input {
+          resize: none;
+        }
+                
         .tooltip-icon {
           position: relative;
           display: inline-flex;
