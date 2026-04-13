@@ -118,6 +118,45 @@ podman stop -a
 podman rm -a
 ```
 
+#### Repeated use: 
+
+If you want the newest version of ERASOR, enter this command in Windows Powershell, macOS Terminal or Linux environment. If you are fine with your version, skip this step.
+
+```
+cd ERASOR
+git pull
+```
+
+Rebuild the docker file if there were changes (if not, you can skip this step) :
+
+```
+podman build -t erasor .
+```
+
+Start the container as before, but make sure you closed previious container instances (shwon in 5. Stop the container) :
+
+On Linux/Mac:
+```         
+podman run -d \
+  --name erasor-app \
+  -p 3838:3838 \
+  erasor
+```
+
+On Windows (Powershell): 
+```
+podman run -d `
+  --name erasor-app `
+  -p 3838:3838 `
+  erasor
+```
+
+Open:
+
+👉 <http://localhost:3838/ERASOR/Simpel/> 
+
+And close the container as mentioned before. 
+
 ***
 ### 💻 Developer setup (RStudio + Git + SSH)
 
