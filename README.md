@@ -155,7 +155,9 @@ Open:
 
 👉 <http://localhost:3838/ERASOR/Simpel/> 
 
-And close the container as mentioned before. 
+
+
+After usage, close the container as mentioned in 5. Stop the container. 
 
 ***
 ### 💻 Developer setup (RStudio + Git + SSH)
