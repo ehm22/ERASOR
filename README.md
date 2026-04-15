@@ -57,6 +57,12 @@ echo EXAMPLE_OMIM_KEY > OMIM_key
 
 #### 2. Build the Docker image (only needs to be done once)
 
+This command is for Windows only: 
+```
+podman machine start
+```
+
+Build the docker:
 ```
 podman build -t erasor .
 ```
@@ -180,7 +186,7 @@ echo EXAMPLE_OMIM_KEY > OMIM_key
 #### 2. Build the Docker image 
 
 ```
-docker build -t erasor .
+podman build -t erasor .
 ```
 
 #### 3. Create a persistent volume for RStudio home
