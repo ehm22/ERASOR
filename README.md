@@ -100,28 +100,21 @@ Stop the container after you're done to free up ports.
 Also stop the previous container before launching a new one.
 Please be aware that in the case of an unexpected crash or disconnect, you should also stop and remove the previous container.
 
-List running containers:
+Stop the container:
 
 ```
-podman ps
-```
-
-Stop it:
-
-```
-podman stop <container_id>
+podman stop erasor-app
 ```
 
 Remove it:
 
 ```
-podman rm <container_id>
+podman rm erasor-app
 ```
 
 If you want to stop and remove all containers: 
 ```
-podman stop -a
-podman rm -a
+podman stop -a && podman rm -a
 ```
 
 #### Repeated use: 
