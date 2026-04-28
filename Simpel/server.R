@@ -416,6 +416,7 @@ normalize_chr_style <- function(x) {
   ifelse(x %in% c("M", "MT"), "chrM", paste0("chr", x))
 }
 
+
 is_valid_region_string <- function(region) {
   grepl("^[^:]+:\\d+-\\d+$", trimws(region))
 }
@@ -1020,59 +1021,25 @@ function(input, output, session) {
   
   check_biomart <- function() {
     tryCatch({
+      options(timeout = 60)
+      
       martHS <- biomaRt::useEnsembl(
         biomart = "ENSEMBL_MART_ENSEMBL",
-        dataset = "hsapiens_gene_ensembl",
-        host    = "https://www.ensembl.org"
+        dataset = "hsapiens_gene_ensembl"
       )
       
-      martMM <- biomaRt::useEnsembl(
-        biomart = "ENSEMBL_MART_ENSEMBL",
-        dataset = "mmusculus_gene_ensembl",
-        host    = "https://www.ensembl.org"
-      )
-      
-      # 1) human -> mouse ortholog query
-      ortho <- biomaRt::getBM(
-        attributes = "mmusculus_homolog_ensembl_gene",
+      test <- biomaRt::getBM(
+        attributes = "ensembl_gene_id",
         filters    = "ensembl_gene_id",
         values     = "ENSG00000139618",
         mart       = martHS,
         bmHeader   = FALSE
       )
       
-      mm_id <- ortho$mmusculus_homolog_ensembl_gene
-      mm_id <- mm_id[!is.na(mm_id) & nzchar(mm_id)]
-      if (length(mm_id) == 0) return(FALSE)
+      is.data.frame(test) &&
+        nrow(test) > 0 &&
+        "ensembl_gene_id" %in% names(test)
       
-      # 2) mouse sequence query
-      mm_seq <- biomaRt::getBM(
-        attributes = c("gene_exon_intron", "ensembl_gene_id"),
-        filters    = "ensembl_gene_id",
-        values     = mm_id[1],
-        mart       = martMM
-      )
-      
-      if (!is.data.frame(mm_seq) ||
-          nrow(mm_seq) == 0 ||
-          !"gene_exon_intron" %in% names(mm_seq)) {
-        return(FALSE)
-      }
-      
-      # 3) polymorphism query
-      pm <- biomaRt::getBM(
-        attributes = c("minor_allele_freq", "chromosome_start"),
-        filters    = "ensembl_gene_id",
-        values     = "ENSG00000139618",
-        mart       = martHS
-      )
-      
-      if (!is.data.frame(pm) ||
-          !all(c("minor_allele_freq", "chromosome_start") %in% names(pm))) {
-        return(FALSE)
-      }
-      
-      TRUE
     }, error = function(e) {
       message("BioMart startup check failed: ", e$message)
       FALSE
@@ -1683,61 +1650,99 @@ function(input, output, session) {
       
       options(timeout = 60)
       
-      # Define the marts for mmusculus and hsapiens
-      if (isTRUE(use_reference_gene())) {
-      
-      martHS <- useEnsembl(
-        biomart = "ENSEMBL_MART_ENSEMBL",
-        dataset = "hsapiens_gene_ensembl",
-        host    = "https://www.ensembl.org"
-      )
-      
-      martMM <- useEnsembl(
-        biomart = "ENSEMBL_MART_ENSEMBL",
-        dataset = "mmusculus_gene_ensembl",
-        host    = "https://www.ensembl.org"
-      )
-      
-      # Get the orthologous Ensembl gene for the provided human Ensembl ID
-      ortho_ENS = getBM(attributes = "mmusculus_homolog_ensembl_gene",
-                        filters = "ensembl_gene_id",
-                        values = ensembl_ID, mart = martHS,
-                        bmHeader = FALSE)
+      if (isTRUE(use_reference_gene()) && isTRUE(biomart_available())) {
+        
+        martHS <- tryCatch(
+          useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "hsapiens_gene_ensembl"
+          ),
+          error = function(e) useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "hsapiens_gene_ensembl",
+            mirror  = "www"
+          )
+        )
+        
+        martMM <- tryCatch(
+          useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "mmusculus_gene_ensembl"
+          ),
+          error = function(e) useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "mmusculus_gene_ensembl",
+            mirror  = "www"
+          )
+        )
+        
+        ortho_ENS <- tryCatch(
+          getBM(
+            attributes = "mmusculus_homolog_ensembl_gene",
+            filters = "ensembl_gene_id",
+            values = ensembl_ID,
+            mart = martHS,
+            bmHeader = FALSE
+          ),
+          error = function(e) data.frame(
+            mmusculus_homolog_ensembl_gene = character()
+          )
+        )
       
       # ----------------------------------- milestone 11 ---------------------------
       print("milestone 11: Get mouse ortholog data for genes")
-      
-      RNA_target_mouse = DNAStringSet(
-        getBM(attributes = c("gene_exon_intron","ensembl_gene_id"),
+        
+        RNA_target_mouse <- tryCatch(
+          DNAStringSet(
+            getBM(
+              attributes = c("gene_exon_intron", "ensembl_gene_id"),
               filters = "ensembl_gene_id",
-              values =
-                ortho_ENS$mmusculus_homolog_ensembl_gene,
-              mart = martMM)$gene_exon_intron)
-      
+              values = ortho_ENS$mmusculus_homolog_ensembl_gene,
+              mart = martMM
+            )$gene_exon_intron
+          ),
+          error = function(e) DNAStringSet()
+        )
+        
       } else {
         martHS <- NULL
         martMM <- NULL
         ortho_ENS <- NULL
         RNA_target_mouse <- DNAStringSet()
-        target_annotation$conserved_in_mmusculus <- NA 
+        target_annotation$conserved_in_mmusculus <- NA
       }
       
       # ----------------------------------- milestone 12 ---------------------------
       print("milestone 12: ")
       
       # Obtain all human polymorphisms for the RNA target
-      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
-        PMs = getBM(
-          attributes = c("minor_allele_freq", "chromosome_start"),
-          filters = "ensembl_gene_id",
-          values = ensembl_ID,
-          mart = martHS
-        ) %>%
-          as_tibble() %>%
-          arrange(chromosome_start, desc(minor_allele_freq)) %>%
-          filter(!is.na(minor_allele_freq),
-                 !duplicated(chromosome_start)) %>%
-          rename(chr_start = chromosome_start, PM_freq = minor_allele_freq)
+      if (isTRUE(use_reference_gene()) && 
+          isTRUE(input$polymorphism_input) && 
+          !is.null(martHS)) {
+        
+        PMs <- tryCatch(
+          getBM(
+            attributes = c("minor_allele_freq", "chromosome_start"),
+            filters = "ensembl_gene_id",
+            values = ensembl_ID,
+            mart = martHS
+          ) %>%
+            as_tibble() %>%
+            arrange(chromosome_start, desc(minor_allele_freq)) %>%
+            filter(
+              !is.na(minor_allele_freq),
+              !duplicated(chromosome_start)
+            ) %>%
+            rename(
+              chr_start = chromosome_start,
+              PM_freq = minor_allele_freq
+            ),
+          error = function(e) tibble(
+            chr_start = integer(),
+            PM_freq = numeric()
+          )
+        )
+        
       } else {
         PMs <- tibble(
           chr_start = integer(),
@@ -1804,7 +1809,9 @@ function(input, output, session) {
       
       # Keep unique names only and extract
       # Information base on chr_start from target.
-      if (isTRUE(use_reference_gene()) && isTRUE(input$polymorphism_input)) {
+      if (isTRUE(use_reference_gene()) && 
+          isTRUE(input$polymorphism_input) && 
+          nrow(PMs) > 0) {
         PM_freq = PMs %>%
           mutate(name = map(chr_start, function(X) {
             filter(target_annotation, chr_start <= X, chr_end >= X) %>%
