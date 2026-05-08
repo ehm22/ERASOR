@@ -1,4 +1,4 @@
-dev_mode <- TRUE
+dev_mode <- FALSE
 
 library(DT)
 library(shinythemes)
@@ -1033,172 +1033,324 @@ add_specific_aso_reference_cf_annotations <- function(
   }
   
   if (isTRUE(input_polymorphism) && nrow(PMs) > 0) {
-    PM_freq <- PMs %>%
-      mutate(name = map(chr_start, function(X) {
-        filter(
-          target_annotation,
-          !is.na(chr_start),
-          !is.na(chr_end),
-          chr_start <= X,
-          chr_end >= X
-        ) %>%
-          select(name, chr_start_anno = chr_start)
-      })) %>%
-      unnest_legacy() %>%
-      rename(chr_start_PM = chr_start) %>%
-      group_by(name, chr_start_anno) %>%
-      summarise(
-        PM_tot_freq = 1 - prod(1 - PM_freq),
-        PM_max_freq = max(PM_freq),
-        PM_count = n(),
-        .groups = "drop"
-      )
     
-    target_annotation <- left_join(
-      target_annotation,
-      PM_freq,
-      by = c("name" = "name", "chr_start" = "chr_start_anno")
+    target_annotation <- target_annotation %>%
+      dplyr::mutate(.pm_row_id = dplyr::row_number())
+    
+    PM_freq <- purrr::map_dfr(
+      seq_len(nrow(PMs)),
+      function(i) {
+        X <- PMs$chr_start[[i]]
+        freq <- PMs$PM_freq[[i]]
+        
+        target_annotation %>%
+          dplyr::filter(
+            !is.na(chr_start),
+            !is.na(chr_end),
+            chr_start <= X,
+            chr_end >= X
+          ) %>%
+          dplyr::transmute(
+            .pm_row_id = .pm_row_id,
+            PM_pos = X,
+            PM_freq = as.numeric(freq)
+          )
+      }
     ) %>%
-      mutate(
-        PM_tot_freq = coalesce(PM_tot_freq.y, PM_tot_freq.x),
-        PM_max_freq = coalesce(PM_max_freq.y, PM_max_freq.x),
-        PM_count    = coalesce(PM_count.y, PM_count.x)
-      ) %>%
-      select(
-        -PM_tot_freq.x, -PM_tot_freq.y,
-        -PM_max_freq.x, -PM_max_freq.y,
-        -PM_count.x, -PM_count.y
-      )
+      dplyr::filter(!is.na(PM_freq))
+    
+    if (nrow(PM_freq) > 0) {
+      PM_summary <- PM_freq %>%
+        dplyr::group_by(.pm_row_id) %>%
+        dplyr::summarise(
+          PM_tot_freq = 1 - prod(1 - PM_freq),
+          PM_max_freq = max(PM_freq),
+          PM_count = dplyr::n(),
+          .groups = "drop"
+        )
+      
+      target_annotation <- target_annotation %>%
+        dplyr::left_join(PM_summary, by = ".pm_row_id", suffix = c("", ".new")) %>%
+        dplyr::mutate(
+          PM_tot_freq = dplyr::coalesce(PM_tot_freq.new, PM_tot_freq),
+          PM_max_freq = dplyr::coalesce(PM_max_freq.new, PM_max_freq),
+          PM_count    = dplyr::coalesce(PM_count.new, PM_count)
+        ) %>%
+        dplyr::select(
+          -PM_tot_freq.new,
+          -PM_max_freq.new,
+          -PM_count.new
+        )
+    }
+    
+    target_annotation <- target_annotation %>%
+      dplyr::select(-.pm_row_id)
   }
   
   # Mouse conservation
-  # Mouse conservation ------------------------------------------------------
+  # Mouse exact target-sequence match ---------------------------------------
   
-  target_annotation$conserved_in_mmusculus <- NA
-  target_annotation$mouse_conservation_status <- NA_character_
+  target_annotation$conserved_in_mmusculus <- NA_character_
+  # target_annotation$mouse_conservation_status <- NA_character_
   target_annotation$mouse_ortholog_ids <- NA_character_
+  target_annotation$mouse_matching_ortholog_ids <- NA_character_
+  target_annotation$mouse_matching_target_sequences <- NA_character_
+  
+  ensembl_ID_clean <- sub("\\..*$", "", ensembl_ID)
   
   if (is.null(martHS) || is.null(martMM)) {
     
-    target_annotation$mouse_conservation_status <-
-      "BioMart unavailable; mouse conservation not calculated"
+    target_annotation$conserved_in_mmusculus <- "failed"
+    # target_annotation$mouse_conservation_status <-
+    #   "Failed: BioMart unavailable; mouse target match not calculated"
+    
+  } else if (!"name" %in% names(target_annotation)) {
+    
+    target_annotation$conserved_in_mmusculus <- "failed"
+    # target_annotation$mouse_conservation_status <-
+    #   "Failed: target sequence column 'name' is missing"
+    
+  } else if (!"oligo_seq" %in% names(target_annotation)) {
+    
+    target_annotation$conserved_in_mmusculus <- "failed"
+    # target_annotation$mouse_conservation_status <-
+    #   "Failed: ASO sequence column 'oligo_seq' is missing"
+    
+  } else if (!"length" %in% names(target_annotation)) {
+    
+    target_annotation$conserved_in_mmusculus <- "failed"
+    # target_annotation$mouse_conservation_status <-
+    #   "Failed: ASO length column is missing"
     
   } else {
+    
+    # Clean target sequences.
+    # This is the sequence that should be searched in mouse.
+    target_annotation <- target_annotation %>%
+      dplyr::mutate(
+        name = toupper(trimws(as.character(name))),
+        oligo_seq = toupper(trimws(as.character(oligo_seq))),
+        length = as.integer(length)
+      )
     
     ortho_ENS <- tryCatch(
       {
         biomaRt::getBM(
           attributes = "mmusculus_homolog_ensembl_gene",
           filters = "ensembl_gene_id",
-          values = ensembl_ID,
+          values = ensembl_ID_clean,
           mart = martHS,
           bmHeader = FALSE
         )
       },
       error = function(e) {
         message("Mouse ortholog BioMart query failed: ", conditionMessage(e))
-        data.frame(mmusculus_homolog_ensembl_gene = character())
+        NULL
       }
     )
     
-    mouse_ids <- unique(ortho_ENS$mmusculus_homolog_ensembl_gene)
-    mouse_ids <- mouse_ids[!is.na(mouse_ids) & nzchar(mouse_ids)]
-    
-    target_annotation$mouse_ortholog_ids <- if (length(mouse_ids) > 0) {
-      paste(mouse_ids, collapse = "; ")
-    } else {
-      NA_character_
-    }
-    
-    if (length(mouse_ids) == 0) {
+    if (
+      is.null(ortho_ENS) ||
+      !is.data.frame(ortho_ENS) ||
+      !"mmusculus_homolog_ensembl_gene" %in% names(ortho_ENS)
+    ) {
       
-      target_annotation$mouse_conservation_status <-
-        "No mouse ortholog Ensembl ID returned by BioMart"
+      target_annotation$conserved_in_mmusculus <- "failed"
+      # target_annotation$mouse_conservation_status <-
+      #   "Failed: mouse ortholog BioMart query failed"
       
     } else {
       
-      mouse_seq_df <- tryCatch(
-        {
-          biomaRt::getBM(
-            attributes = c("ensembl_gene_id", "gene_exon_intron"),
-            filters = "ensembl_gene_id",
-            values = mouse_ids,
-            mart = martMM
-          )
-        },
-        error = function(e) {
-          message("Mouse gene sequence BioMart query failed: ", conditionMessage(e))
-          data.frame(
-            ensembl_gene_id = character(),
-            gene_exon_intron = character()
-          )
-        }
-      )
+      mouse_ids <- unique(ortho_ENS$mmusculus_homolog_ensembl_gene)
+      mouse_ids <- mouse_ids[!is.na(mouse_ids) & nzchar(mouse_ids)]
       
-      mouse_seq_df <- mouse_seq_df %>%
-        dplyr::filter(
-          !is.na(gene_exon_intron),
-          nzchar(gene_exon_intron)
-        )
+      target_annotation$mouse_ortholog_ids <- if (length(mouse_ids) > 0) {
+        paste(mouse_ids, collapse = "; ")
+      } else {
+        NA_character_
+      }
       
-      if (nrow(mouse_seq_df) == 0) {
+      if (length(mouse_ids) == 0) {
         
-        target_annotation$mouse_conservation_status <-
-          "Mouse ortholog ID found, but no mouse gene_exon_intron sequence returned"
+        target_annotation$conserved_in_mmusculus <- "failed"
+        # target_annotation$mouse_conservation_status <-
+        #   "Failed: no mouse ortholog Ensembl ID returned by BioMart"
         
       } else {
         
-        RNA_target_mouse <- Biostrings::DNAStringSet(
-          mouse_seq_df$gene_exon_intron
+        mouse_seq_df <- tryCatch(
+          {
+            biomaRt::getBM(
+              attributes = c("ensembl_gene_id", "gene_exon_intron"),
+              filters = "ensembl_gene_id",
+              values = mouse_ids,
+              mart = martMM
+            )
+          },
+          error = function(e) {
+            message("Mouse gene sequence BioMart query failed: ", conditionMessage(e))
+            NULL
+          }
         )
         
-        oligo_lengths_current <- sort(unique(target_annotation$length))
-        
-        mouse_windows <- lapply(seq_along(RNA_target_mouse), function(j) {
-          mouse_seq_j <- RNA_target_mouse[[j]]
-          lm_j <- Biostrings::width(mouse_seq_j)
+        if (
+          is.null(mouse_seq_df) ||
+          !is.data.frame(mouse_seq_df) ||
+          !"ensembl_gene_id" %in% names(mouse_seq_df) ||
+          !"gene_exon_intron" %in% names(mouse_seq_df)
+        ) {
           
-          one_mouse <- lapply(oligo_lengths_current, function(i) {
-            i <- as.integer(i)
-            
-            if (lm_j < i) {
-              return(Biostrings::DNAStringSet())
-            }
-            
-            starts_j <- seq_len(lm_j - i + 1L)
-            
-            Biostrings::DNAStringSet(
-              mouse_seq_j,
-              start = starts_j,
-              width = i
-            )
-          })
-          
-          do.call(c, one_mouse)
-        })
-        
-        RNAsitesMM <- do.call(c, mouse_windows)
-        
-        if (length(RNAsitesMM) == 0) {
-          
-          target_annotation$conserved_in_mmusculus <- NA
-          target_annotation$mouse_conservation_status <-
-            "Mouse ortholog sequence found, but no mouse windows generated"
+          target_annotation$conserved_in_mmusculus <- "failed"
+          # target_annotation$mouse_conservation_status <-
+          #   "Failed: mouse gene_exon_intron sequence BioMart query failed"
           
         } else {
           
-          target_annotation$conserved_in_mmusculus <-
-            target_annotation$name %in% as.character(RNAsitesMM)
+          mouse_seq_df <- mouse_seq_df %>%
+            dplyr::as_tibble() %>%
+            dplyr::filter(
+              !is.na(ensembl_gene_id),
+              nzchar(ensembl_gene_id),
+              !is.na(gene_exon_intron),
+              nzchar(gene_exon_intron)
+            ) %>%
+            dplyr::mutate(
+              ensembl_gene_id = as.character(ensembl_gene_id),
+              gene_exon_intron = toupper(as.character(gene_exon_intron))
+            ) %>%
+            dplyr::distinct(ensembl_gene_id, gene_exon_intron)
           
-          target_annotation$mouse_conservation_status <-
-            paste0(
-              "Mouse conservation calculated using ",
-              length(mouse_ids),
-              " mouse ortholog ID(s)"
-            )
+          if (nrow(mouse_seq_df) == 0) {
+            
+            target_annotation$conserved_in_mmusculus <- "failed"
+            # target_annotation$mouse_conservation_status <-
+            #   "Failed: mouse ortholog ID found, but no mouse gene_exon_intron sequence returned"
+            
+          } else {
+            
+            valid_lengths <- sort(unique(as.integer(target_annotation$length)))
+            valid_lengths <- valid_lengths[!is.na(valid_lengths) & valid_lengths > 0]
+            
+            if (length(valid_lengths) == 0) {
+              
+              target_annotation$conserved_in_mmusculus <- "failed"
+              # target_annotation$mouse_conservation_status <-
+              #   "Failed: no valid ASO lengths available for mouse matching"
+              
+            } else {
+              
+              mouse_windows <- purrr::map_dfr(
+                seq_len(nrow(mouse_seq_df)),
+                function(j) {
+                  mouse_id_j <- mouse_seq_df$ensembl_gene_id[[j]]
+                  mouse_seq_j <- mouse_seq_df$gene_exon_intron[[j]]
+                  mouse_len_j <- nchar(mouse_seq_j)
+                  
+                  purrr::map_dfr(
+                    valid_lengths,
+                    function(L) {
+                      if (mouse_len_j < L) {
+                        return(tibble::tibble())
+                      }
+                      
+                      starts_j <- seq_len(mouse_len_j - L + 1L)
+                      
+                      tibble::tibble(
+                        mouse_ortholog_id = mouse_id_j,
+                        length = L,
+                        mouse_target_window = substring(
+                          mouse_seq_j,
+                          starts_j,
+                          starts_j + L - 1L
+                        )
+                      )
+                    }
+                  )
+                }
+              ) %>%
+                dplyr::distinct()
+              
+              if (nrow(mouse_windows) == 0) {
+                
+                target_annotation$conserved_in_mmusculus <- "failed"
+                # target_annotation$mouse_conservation_status <-
+                #   "Failed: mouse ortholog sequence found, but no mouse windows generated"
+                
+              } else {
+                
+                mouse_match_tbl <- target_annotation %>%
+                  dplyr::mutate(
+                    .row_id = dplyr::row_number(),
+                    target_query = toupper(as.character(name)),
+                    length = as.integer(length)
+                  ) %>%
+                  dplyr::select(.row_id, target_query, length) %>%
+                  dplyr::left_join(
+                    mouse_windows,
+                    by = c(
+                      "target_query" = "mouse_target_window",
+                      "length" = "length"
+                    )
+                  ) %>%
+                  dplyr::group_by(.row_id) %>%
+                  dplyr::summarise(
+                    conserved_in_mmusculus_new = any(!is.na(mouse_ortholog_id)),
+                    mouse_matching_ortholog_ids_new = {
+                      ids <- unique(mouse_ortholog_id[!is.na(mouse_ortholog_id)])
+                      if (length(ids) == 0) {
+                        NA_character_
+                      } else {
+                        paste(ids, collapse = "; ")
+                      }
+                    },
+                    mouse_matching_target_sequences_new = {
+                      seqs <- unique(target_query[!is.na(mouse_ortholog_id)])
+                      if (length(seqs) == 0) {
+                        NA_character_
+                      } else {
+                        paste(seqs, collapse = "; ")
+                      }
+                    },
+                    .groups = "drop"
+                  )
+                
+                target_annotation <- target_annotation %>%
+                  dplyr::mutate(.row_id = dplyr::row_number()) %>%
+                  dplyr::left_join(mouse_match_tbl, by = ".row_id") %>%
+                  dplyr::mutate(
+                    conserved_in_mmusculus = as.character(conserved_in_mmusculus_new),
+                    mouse_matching_ortholog_ids = mouse_matching_ortholog_ids_new,
+                    mouse_matching_target_sequences = mouse_matching_target_sequences_new,
+                    # mouse_conservation_status = dplyr::case_when(
+                    #   conserved_in_mmusculus == "TRUE" ~
+                    #     "Exact ASO target sequence found in mouse ortholog",
+                    #   conserved_in_mmusculus == "FALSE" ~
+                    #     "Exact ASO target sequence not found in mouse ortholog",
+                    #   TRUE ~
+                    #     "Mouse target match not calculated"
+                    # )
+                  ) %>%
+                  dplyr::select(
+                    -.row_id,
+                    -conserved_in_mmusculus_new,
+                    -mouse_matching_ortholog_ids_new,
+                    -mouse_matching_target_sequences_new
+                  )
+              }
+            }
+          }
         }
       }
     }
+  }
+  
+  if (isTRUE(input_polymorphism)) {
+    target_annotation <- target_annotation %>%
+      dplyr::mutate(
+        PM_tot_freq = tidyr::replace_na(as.numeric(PM_tot_freq), 0),
+        PM_max_freq = tidyr::replace_na(as.numeric(PM_max_freq), 0),
+        PM_count    = tidyr::replace_na(as.numeric(PM_count), 0)
+      )
   }
   
   target_annotation
@@ -3718,7 +3870,6 @@ function(input, output, session) {
   observeEvent(input$reset_defaults_patient, {
     updateCheckboxInput(session, "patient_ASO_ending_G", value = TRUE)
     updateCheckboxInput(session, "patient_Conserved_input", value = FALSE)
-    updateCheckboxInput(session, "patient_polymorphism_input", value = TRUE)
     
     updateSliderInput(session, "patient_oligo_length_range", value = c(18, 20))
     
@@ -5908,6 +6059,12 @@ function(input, output, session) {
       rnaseh_mean_score = "Average RNase H score",
       region_class = "Target region",
       target_transcript = "Target transcript(s)",
+      conserved_in_mmusculus = "Conserved in mouse",
+      # mouse_conservation_status = "Mouse conservation status",
+      mouse_matching_ortholog_ids = "Mouse matching ortholog ID(s)",
+      PM_tot_freq = "PM total freq.",
+      PM_max_freq = "PM max freq.",
+      PM_count = "PM count",
       chr_start = "Chromosome start pos.",
       chr_end = "Chromosome end pos.",
       NoRepeats = "Number of repeats",
@@ -6770,6 +6927,36 @@ function(input, output, session) {
       target_annotation_patient_snv <- tibble()
       target_annotation_patient_ambiguous <- tibble()
       
+      martHS <- NULL
+      martMM <- NULL
+      RNA_target_mouse <- DNAStringSet()
+      
+      if (isTRUE(biomart_available())) {
+        martHS <- tryCatch(
+          useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "hsapiens_gene_ensembl"
+          ),
+          error = function(e) useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "hsapiens_gene_ensembl",
+            mirror  = "www"
+          )
+        )
+        
+        martMM <- tryCatch(
+          useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "mmusculus_gene_ensembl"
+          ),
+          error = function(e) useEnsembl(
+            biomart = "ENSEMBL_MART_ENSEMBL",
+            dataset = "mmusculus_gene_ensembl",
+            mirror  = "www"
+          )
+        )
+      }
+      
       if (run_reference_patient_asos) {
       
       l <- width(RNA_target)
@@ -6855,30 +7042,6 @@ function(input, output, session) {
       
       if (isTRUE(biomart_available())) {
         
-        martHS <- tryCatch(
-          useEnsembl(
-            biomart = "ENSEMBL_MART_ENSEMBL",
-            dataset = "hsapiens_gene_ensembl"
-          ),
-          error = function(e) useEnsembl(
-            biomart = "ENSEMBL_MART_ENSEMBL",
-            dataset = "hsapiens_gene_ensembl",
-            mirror  = "www"
-          )
-        )
-        
-        martMM <- tryCatch(
-          useEnsembl(
-            biomart = "ENSEMBL_MART_ENSEMBL",
-            dataset = "mmusculus_gene_ensembl"
-          ),
-          error = function(e) useEnsembl(
-            biomart = "ENSEMBL_MART_ENSEMBL",
-            dataset = "mmusculus_gene_ensembl",
-            mirror  = "www"
-          )
-        )
-        
         ortho_ENS <- tryCatch(
           getBM(
             attributes = "mmusculus_homolog_ensembl_gene",
@@ -6910,7 +7073,7 @@ function(input, output, session) {
         target_annotation$conserved_in_mmusculus <- NA
       }
       
-      if (isTRUE(input$patient_polymorphism_input) && !is.null(martHS)) {
+      if (isTRUE(patient_polymorphism_enabled()) && !is.null(martHS)) {
         PMs <- tryCatch(
           getBM(
             attributes = c("minor_allele_freq", "chromosome_start"),
@@ -6954,7 +7117,7 @@ function(input, output, session) {
         txdb = txdb_hsa,
         ensembl_ID = ensembl_ID
       )
-      if (isTRUE(input$patient_polymorphism_input) && nrow(PMs) > 0) {
+      if (isTRUE(patient_polymorphism_enabled()) && nrow(PMs) > 0) {
         PM_freq <- PMs %>%
           mutate(name = map(chr_start, function(X) {
             filter(target_annotation, chr_start <= X, chr_end >= X) %>%
@@ -7115,7 +7278,7 @@ function(input, output, session) {
           )
       )
       
-      nseq_pmfreq <- if (isTRUE(input$patient_polymorphism_input)) {
+      nseq_pmfreq <- if (isTRUE(patient_polymorphism_enabled())) {
         pm_rng <- patient_pm_range()
         nseq_prefilter - nrow(
           target_annotation %>%
@@ -7176,12 +7339,12 @@ function(input, output, session) {
         }
       }
       
-      if (isTRUE(input$patient_polymorphism_input)) {
+      if (isTRUE(patient_polymorphism_enabled())) {
         ta <- ta %>%
           mutate(across(c(PM_max_freq, PM_tot_freq, PM_count), ~ tidyr::replace_na(., 0.0)))
       }
       
-      if (isTRUE(input$patient_polymorphism_input) && isTRUE(input$patient_Poly_input)) {
+      if (isTRUE(patient_polymorphism_enabled()) && isTRUE(input$patient_Poly_input)) {
         ta_prev <- ta
         rng <- patient_pm_range()
         ta <- apply_range(ta, "PM_tot_freq", rng)
@@ -7263,6 +7426,38 @@ function(input, output, session) {
           txdb = txdb_hsa,
           ensembl_ID = ensembl_ID
         )
+        
+        target_annotation_patient_snv <- add_specific_aso_reference_cf_annotations(
+          target_annotation = target_annotation_patient_snv,
+          txdb_hsa = txdb_hsa,
+          ensembl_ID = ensembl_ID,
+          martHS = martHS,
+          martMM = martMM,
+          input_polymorphism = isTRUE(patient_polymorphism_enabled())
+        )
+        #&*##
+        print("PM debug after patient SNV annotation:")
+        print(
+          target_annotation_patient_snv %>%
+            dplyr::summarise(
+              n_rows = dplyr::n(),
+              n_chr_start_non_na = sum(!is.na(chr_start)),
+              n_PM_tot_non_na = sum(!is.na(PM_tot_freq)),
+              n_PM_tot_positive = sum(PM_tot_freq > 0, na.rm = TRUE),
+              martHS_available = !is.null(martHS),
+              polymorphism_enabled = isTRUE(patient_polymorphism_enabled())
+            )
+        )
+        #&*##
+        
+        if (isTRUE(patient_polymorphism_enabled())) {
+          target_annotation_patient_snv <- target_annotation_patient_snv %>%
+            dplyr::mutate(
+              PM_tot_freq = tidyr::replace_na(as.numeric(PM_tot_freq), 0),
+              PM_max_freq = tidyr::replace_na(as.numeric(PM_max_freq), 0),
+              PM_count    = tidyr::replace_na(as.numeric(PM_count), 0)
+            )
+        }
         
         target_annotation_patient_snv$tox_score <- calculate_acute_neurotox(
           target_annotation_patient_snv$oligo_seq
@@ -7365,7 +7560,7 @@ function(input, output, session) {
           chr_start = integer(),
           chr_end = integer(),
           NoRepeats = numeric(),
-          conserved_in_mmusculus = logical(),
+          conserved_in_mmusculus = character(),
           sec_energy = numeric(),
           duplex_energy = numeric()
         )
@@ -7442,7 +7637,7 @@ function(input, output, session) {
           ta_prev <- ta_snv
           
           ta_snv <- ta_snv %>%
-            dplyr::filter(conserved_in_mmusculus == TRUE)
+            dplyr::filter(conserved_in_mmusculus == "TRUE")
           
           if (nrow(ta_snv) == 0) {
             ta_snv <- ta_prev
@@ -8401,18 +8596,40 @@ function(input, output, session) {
           paste0(
             "patient_snv_aso_results_",
             format(Sys.time(), "%Y%m%d_%H%M%S"),
-            ".csv"
+            ".xlsx"
           )
         },
         content = function(file) {
           if (is.null(target_annotation_patient_snv) || nrow(target_annotation_patient_snv) == 0) {
-            write.csv(
-              data.frame(Message = "No patient-derived SNV ASOs detected."),
-              file,
-              row.names = FALSE
+            
+            wb <- openxlsx::createWorkbook()
+            openxlsx::addWorksheet(wb, "SNV_ASO_results")
+            openxlsx::writeData(
+              wb,
+              "SNV_ASO_results",
+              data.frame(Message = "No patient-derived SNV ASOs detected.")
             )
+            openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
+            
           } else {
-            write.csv(target_annotation_patient_snv, file, row.names = FALSE)
+            
+            export_df <- target_annotation_patient_snv
+            
+            if ("genotype" %in% names(export_df)) {
+              export_df$genotype <- as.character(export_df$genotype)
+            }
+            
+            wb <- openxlsx::createWorkbook()
+            openxlsx::addWorksheet(wb, "SNV_ASO_results")
+            
+            openxlsx::writeData(
+              wb,
+              "SNV_ASO_results",
+              export_df,
+              rowNames = FALSE
+            )
+            
+            openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
           }
         }
       )
@@ -8455,6 +8672,10 @@ function(input, output, session) {
   cached_results_single_aso <- reactiveVal(list())
   
   show_all_cols_single_aso <- reactiveVal(FALSE)
+  
+  patient_polymorphism_enabled <- reactive(TRUE)
+  single_aso_polymorphism_enabled <- reactive(TRUE)
+  general_polymorphism_enabled <- reactive(TRUE)
   
   # Disable Specific ASO buttons until results exist/selection exists
   observe({
@@ -9188,8 +9409,8 @@ function(input, output, session) {
       "max_pLI",
       "min_LOEUF",
       "conserved_in_mmusculus",
-      "mouse_conservation_status",
-      "mouse_ortholog_ids",
+      # "mouse_conservation_status",
+      "mouse_matching_ortholog_ids",
       "CGs",
       "PM_tot_freq",
       "PM_max_freq",
@@ -9242,7 +9463,7 @@ function(input, output, session) {
       max_pLI                             = "Max. off-target pLI",
       min_LOEUF                           = "Min. off-target LOEUF",
       conserved_in_mmusculus              = "Conserved in mouse",
-      mouse_conservation_status           = "Mouse conservation status",
+      # mouse_conservation_status           = "Mouse conservation status",
       mouse_ortholog_ids                  = "Mouse ortholog ID(s)",
       CGs                                 = "Number of CpGs",
       PM_tot_freq                         = "PM total freq.",

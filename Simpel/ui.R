@@ -845,7 +845,7 @@ ui <- fluidPage(
                     ),
                     min = 15,
                     max = 25,
-                    value = c(18, 20)
+                    value = c(18, 19)
                   )
                 ),
                 
@@ -1415,7 +1415,7 @@ ui <- fluidPage(
                   ),
                   
                   filterBlockUI(
-                    title = "patient_Conserved in Mus musculus",
+                    title = "Conserved in Mus musculus",
                     checkbox_id = "patient_Conserved_input",
                     checkbox_value = FALSE,
                     tooltip = "This filter removes any ASOs where the target region is NOT conserved in the mouse genome. Enabling this filter will give ASOs that work in both human and mouse. ",
@@ -1445,7 +1445,7 @@ ui <- fluidPage(
                     ),
                     min = 15,
                     max = 25,
-                    value = c(18, 20)
+                    value = c(18, 19)
                   )
                 ),
                 
